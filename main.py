@@ -17,6 +17,24 @@ app.add_middleware(
 )
 
 
+def data_generator():
+    response_id = uuid.uuid4().hex
+    sentence = "Hello this is a test response from a fixed OpenAI endpoint."
+    words = sentence.split(" ")
+    for word in words:
+        chunk = {
+                    "id": f"chatcmpl-{response_id}",
+                    "object": "chat.completion.chunk",
+                    "created": 1677652288,
+                    "model": "gpt-3.5-turbo-0125",
+                    "choices": [{"index": 0, "delta": {"content": word}}],
+                }
+        try:
+            yield f"data: {json.dumps(chunk.dict())}\n\n"
+        except:
+            yield f"data: {json.dumps(chunk)}\n\n"
+
+
 # for completion
 @app.post("/chat/completions")
 @app.post("/v1/chat/completions")
@@ -24,24 +42,10 @@ async def completion(request: Request):
     data = await request.json()
 
     if data.get("stream") == True:
-        response_id = uuid.uuid4().hex
-        sentence = "Hello this is a test response from a fixed OpenAI endpoint."
-        words = sentence.split(" ")
-
-        async def stream_response():
-            for i, word in enumerate(words):
-                chunk = {
-                    "id": f"chatcmpl-{response_id}",
-                    "object": "chat.completion.chunk",
-                    "created": 1677652288,
-                    "model": "gpt-3.5-turbo-0125",
-                    "choices": [{"index": 0, "delta": {"content": word}}],
-                }
-                yield json.dumps(chunk, indent=4).encode()
-                await asyncio.sleep(0.0001)  # For demo purpose
-
-        return StreamingResponse(stream_response(), media_type="text/event-stream")
-
+        return StreamingResponse(
+            content=data_generator(),
+            media_type="text/event-stream",
+        )
     else:
         response_id = uuid.uuid4().hex
         response = {
