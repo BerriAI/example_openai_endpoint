@@ -22,6 +22,7 @@ def data_generator():
     sentence = "Hello this is a test response from a fixed OpenAI endpoint."
     words = sentence.split(" ")
     for word in words:
+        word = word + " "
         chunk = {
                     "id": f"chatcmpl-{response_id}",
                     "object": "chat.completion.chunk",
