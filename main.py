@@ -71,6 +71,43 @@ async def completion(request: Request):
         return response
 
 
+# for completion
+@app.post("/completions")
+@app.post("/v1/completions")
+async def completion(request: Request):
+    data = await request.json()
+
+    if data.get("stream") == True:
+        return StreamingResponse(
+            content=data_generator(),
+            media_type="text/event-stream",
+        )
+    else:
+        response_id = uuid.uuid4().hex
+        response = {
+            "id": "cmpl-9B2ycsf0odECdLmrVzm2y8Q12csjW",
+            "choices": [
+                {
+                "finish_reason": "length",
+                "index": 0,
+                "logprobs": None,
+                "text": "\n\nA test request, how intriguing\nAn invitation for knowledge bringing\nWith words"
+                }
+            ],
+            "created": 1712420078,
+            "model": "gpt-3.5-turbo-instruct-0914",
+            "object": "text_completion",
+            "system_fingerprint": None,
+            "usage": {
+                "completion_tokens": 16,
+                "prompt_tokens": 10,
+                "total_tokens": 26
+            }
+        }
+
+        return response
+
+
 
 if __name__ == "__main__":
     import uvicorn
