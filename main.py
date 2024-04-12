@@ -39,6 +39,7 @@ def data_generator():
 # for completion
 @app.post("/chat/completions")
 @app.post("/v1/chat/completions")
+@app.post("/openai/deployments/{model:path}/chat/completions")  # azure compatible endpoint
 async def completion(request: Request):
     data = await request.json()
 
@@ -111,6 +112,7 @@ async def text_completion(request: Request):
 
 @app.post("/embeddings")
 @app.post("/v1/embeddings")
+@app.post("/openai/deployments/{model:path}/embeddings")  # azure compatible endpoint
 async def embeddings(request: Request):
     return {
         "object": "list",
