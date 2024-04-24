@@ -5,6 +5,10 @@ from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import json
 import uuid
+import asyncio
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
 app = FastAPI()
 
@@ -41,6 +45,11 @@ def data_generator():
 @app.post("/v1/chat/completions")
 @app.post("/openai/deployments/{model:path}/chat/completions")  # azure compatible endpoint
 async def completion(request: Request):
+    _time_to_sleep = os.getenv("TIME_TO_SLEEP", None)
+    print("sleeping for " + _time_to_sleep)
+    if _time_to_sleep is not None:
+        await asyncio.sleep(float(_time_to_sleep))
+
     data = await request.json()
 
     if data.get("stream") == True:
