@@ -7,7 +7,7 @@ import json
 import uuid
 import asyncio
 import os
-
+import time
 app = FastAPI()
 
 app.add_middleware(
@@ -19,7 +19,7 @@ app.add_middleware(
 )
 
 time_to_sleep = 1
-time_to_sleep_steam = 0.3
+time_to_sleep_stream = 0.3
 
 async def data_generator():
     response_id = uuid.uuid4().hex
@@ -38,7 +38,7 @@ async def data_generator():
             yield f"data: {json.dumps(chunk.dict())}\n\n"
         except:
             yield f"data: {json.dumps(chunk)}\n\n"
-        if time_to_sleep_steam:
+        if time_to_sleep_stream:
             await asyncio.sleep(time_to_sleep_stream)
 
 # for completion
@@ -47,11 +47,12 @@ async def data_generator():
 @app.post("/openai/deployments/{model:path}/chat/completions")  # azure compatible endpoint
 async def completion(request: Request):
     if time_to_sleep:
-        print(f"sleeping for {time_to_sleep}")
+        # print(f"sleeping for {time_to_sleep}")
         await asyncio.sleep(float(time_to_sleep))
 
     data = await request.json()
-    print(data)
+    #print(data)
+    print(time.time())
 
     if data.get("stream") == True:
         return StreamingResponse(
