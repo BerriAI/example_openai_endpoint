@@ -7,8 +7,6 @@ import json
 import uuid
 import asyncio
 import os
-from dotenv import load_dotenv
-load_dotenv()
 
 app = FastAPI()
 
