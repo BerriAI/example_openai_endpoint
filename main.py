@@ -10,6 +10,11 @@ import uuid
 import asyncio
 import os
 import time
+from langchain.text_splitter import TokenTextSplitter
+
+
+
+
 
 app = FastAPI()
 
@@ -39,10 +44,14 @@ async def custom_exception_handler(request: Request, exc: Exception):
 
 async def data_generator():
     response_id = uuid.uuid4().hex
-    sentence = "Hello this is a test response from a fixed OpenAI endpoint."
+    sentence = "Hello this is a test response from a fixed OpenAI endpoint. " * 5
     words = sentence.split(" ")
+
+    a = TokenTextSplitter(model_name="gpt-3.5-turbo", chunk_size=1, chunk_overlap=0)
+    words = a.split_text(sentence)
+    
     for word in words:
-        word = word + " "
+        word = word
         chunk = {
             "id": f"chatcmpl-{response_id}",
             "object": "chat.completion.chunk",
