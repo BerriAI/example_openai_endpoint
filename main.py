@@ -18,7 +18,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-time_to_sleep = 0
+time_to_sleep = 1
+time_to_sleep_steam = 0.3
 
 async def data_generator():
     response_id = uuid.uuid4().hex
@@ -37,7 +38,8 @@ async def data_generator():
             yield f"data: {json.dumps(chunk.dict())}\n\n"
         except:
             yield f"data: {json.dumps(chunk)}\n\n"
-        await asyncio.sleep(1)
+        if time_to_sleep_steam:
+            await asyncio.sleep(time_to_sleep_stream)
 
 # for completion
 @app.post("/chat/completions")
@@ -45,7 +47,7 @@ async def data_generator():
 @app.post("/openai/deployments/{model:path}/chat/completions")  # azure compatible endpoint
 async def completion(request: Request):
     if time_to_sleep:
-        print("sleeping for " + time_to_sleep)
+        print(f"sleeping for {time_to_sleep}")
         await asyncio.sleep(float(time_to_sleep))
 
     data = await request.json()
@@ -163,4 +165,4 @@ async def embeddings(request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8090)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
