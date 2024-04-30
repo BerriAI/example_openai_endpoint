@@ -18,37 +18,38 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+time_to_sleep = 0
 
-def data_generator():
+async def data_generator():
     response_id = uuid.uuid4().hex
     sentence = "Hello this is a test response from a fixed OpenAI endpoint."
     words = sentence.split(" ")
     for word in words:
         word = word + " "
         chunk = {
-                    "id": f"chatcmpl-{response_id}",
-                    "object": "chat.completion.chunk",
-                    "created": 1677652288,
-                    "model": "gpt-3.5-turbo-0125",
-                    "choices": [{"index": 0, "delta": {"content": word}}],
-                }
+            "id": f"chatcmpl-{response_id}",
+            "object": "chat.completion.chunk",
+            "created": 1677652288,
+            "model": "gpt-3.5-turbo-0125",
+            "choices": [{"index": 0, "delta": {"content": word}}],
+        }
         try:
             yield f"data: {json.dumps(chunk.dict())}\n\n"
         except:
             yield f"data: {json.dumps(chunk)}\n\n"
-
+        await asyncio.sleep(1)
 
 # for completion
 @app.post("/chat/completions")
 @app.post("/v1/chat/completions")
 @app.post("/openai/deployments/{model:path}/chat/completions")  # azure compatible endpoint
 async def completion(request: Request):
-    _time_to_sleep = os.getenv("TIME_TO_SLEEP", None)
-    if _time_to_sleep is not None:
-        print("sleeping for " + _time_to_sleep)
-        await asyncio.sleep(float(_time_to_sleep))
+    if time_to_sleep:
+        print("sleeping for " + time_to_sleep)
+        await asyncio.sleep(float(time_to_sleep))
 
     data = await request.json()
+    print(data)
 
     if data.get("stream") == True:
         return StreamingResponse(
