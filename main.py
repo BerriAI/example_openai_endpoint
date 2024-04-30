@@ -2,12 +2,14 @@ from fastapi import FastAPI, Request, status, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
+from loguru import logger
 import asyncio
 import json
 import uuid
 import asyncio
 import os
 import time
+
 app = FastAPI()
 
 app.add_middleware(
@@ -20,6 +22,19 @@ app.add_middleware(
 
 time_to_sleep = 1
 time_to_sleep_stream = 0.3
+
+logger.add('error.log', level=40)
+
+@app.exception_handler(Exception)
+async def custom_exception_handler(request: Request, exc: Exception):
+    # 记录异常信息
+    logger.error("Uncaught exception: {0}".format(str(exc)))
+    # 返回通用异常响应
+    return JSONResponse(
+        status_code=500,
+        content={"message": "An unexpected error occurred"},
+    )
+
 
 async def data_generator():
     response_id = uuid.uuid4().hex
