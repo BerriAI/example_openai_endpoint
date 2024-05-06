@@ -55,9 +55,8 @@ def fix_incomplete_utf8(words):
     return fixed_words
     
 
-async def data_generator():
+async def data_generator(sentence = "花香蕉的钱，只能请到猴子. " * 5):
     response_id = uuid.uuid4().hex
-    sentence = "花香蕉的钱，只能请到猴子. " * 5
     # a = TokenTextSplitter(model_name="gpt-3.5-turbo", chunk_size=1, chunk_overlap=0)
     # words = a.split_text(sentence)
     encoding = tiktoken.get_encoding("cl100k_base")
@@ -91,7 +90,7 @@ async def completion(request: Request):
 
     if data.get("stream") == True:
         return StreamingResponse(
-            content=data_generator(),
+            content=data_generator(data['messages'][0]['content']),
             media_type="text/event-stream",
         )
     else:
