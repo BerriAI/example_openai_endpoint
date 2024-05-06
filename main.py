@@ -24,7 +24,7 @@ app.add_middleware(
 )
 
 time_to_sleep = 1
-time_to_sleep_stream = 0.3
+time_to_sleep_stream = 2
 
 logger.add('error.log', level=40)
 
