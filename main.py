@@ -62,7 +62,7 @@ async def data_generator():
             "choices": [{"index": 0, "delta": {"content": word}}],
         }
         try:
-            yield f"data: {json.dumps(chunk.dict())}\n\n"
+            yield f"data: {json.dumps(chunk)}\n\n"
         except:
             yield f"data: {json.dumps(chunk)}\n\n"
         if time_to_sleep_stream:
