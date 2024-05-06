@@ -10,6 +10,7 @@ import uuid
 import asyncio
 import os
 import time
+import tiktoken
 from langchain.text_splitter import TokenTextSplitter
 
 
@@ -44,14 +45,15 @@ async def custom_exception_handler(request: Request, exc: Exception):
 
 async def data_generator():
     response_id = uuid.uuid4().hex
-    sentence = "Hello this is a test response from a fixed OpenAI endpoint. " * 5
-    words = sentence.split(" ")
+    sentence = "花香蕉的钱，只能请到猴子. " * 5
 
-    a = TokenTextSplitter(model_name="gpt-3.5-turbo", chunk_size=1, chunk_overlap=0)
-    words = a.split_text(sentence)
+    # a = TokenTextSplitter(model_name="gpt-3.5-turbo", chunk_size=1, chunk_overlap=0)
+    # words = a.split_text(sentence)
+    encoding = tiktoken.get_encoding("cl100k_base")
+    token_integers = encoding.encode(sentence)
+    words = [encoding.decode_single_token_bytes(token) for token in token_integers]
     
     for word in words:
-        word = word
         chunk = {
             "id": f"chatcmpl-{response_id}",
             "object": "chat.completion.chunk",
