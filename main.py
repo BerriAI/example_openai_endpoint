@@ -11,11 +11,7 @@ import asyncio
 import os
 import time
 import tiktoken
-from langchain.text_splitter import TokenTextSplitter
-
-
-
-
+# from langchain.text_splitter import TokenTextSplitter
 
 app = FastAPI()
 
@@ -62,7 +58,6 @@ def fix_incomplete_utf8(words):
 async def data_generator():
     response_id = uuid.uuid4().hex
     sentence = "花香蕉的钱，只能请到猴子. " * 5
-
     # a = TokenTextSplitter(model_name="gpt-3.5-turbo", chunk_size=1, chunk_overlap=0)
     # words = a.split_text(sentence)
     encoding = tiktoken.get_encoding("cl100k_base")
