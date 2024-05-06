@@ -42,6 +42,22 @@ async def custom_exception_handler(request: Request, exc: Exception):
         content={"message": "An unexpected error occurred"},
     )
 
+def fix_incomplete_utf8(words):
+    combined = bytearray()
+    fixed_words = []
+    for word in words:
+        try:
+            combined.extend(word)
+            # 尝试解码来检查是否是完整的UTF-8字符
+            combined.decode('utf-8')
+            fixed_words.append(bytes(combined))
+            combined.clear()
+        except UnicodeDecodeError:
+            continue  # 如果抛出解码错误，继续添加字节直到可以解码为止
+    if combined:
+        fixed_words.append(bytes(combined))  # 添加最后的字节序列
+    return fixed_words
+    
 
 async def data_generator():
     response_id = uuid.uuid4().hex
@@ -52,19 +68,16 @@ async def data_generator():
     encoding = tiktoken.get_encoding("cl100k_base")
     token_integers = encoding.encode(sentence)
     words = [encoding.decode_single_token_bytes(token) for token in token_integers]
-    
-    for word in words:
+    fixed_words = fix_incomplete_utf8(words)
+    for word in fixed_words:
         chunk = {
             "id": f"chatcmpl-{response_id}",
             "object": "chat.completion.chunk",
             "created": 1677652288,
             "model": "gpt-3.5-turbo-0125",
-            "choices": [{"index": 0, "delta": {"content": word}}],
+            "choices": [{"index": 0, "delta": {"content": word.decode('utf-8')}}],
         }
-        try:
-            yield f"data: {json.dumps(chunk)}\n\n"
-        except:
-            yield f"data: {json.dumps(chunk)}\n\n"
+        yield f"data: {json.dumps(chunk)}\n\n"
         if time_to_sleep_stream:
             await asyncio.sleep(time_to_sleep_stream)
 
