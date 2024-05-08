@@ -23,10 +23,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-time_to_sleep = 1
-time_to_sleep_stream = 2
+class RateLimitError(Exception):
+    ...
 
 logger.add('error.log', level=40)
+
+@app.exception_handler(RateLimitError)
+async def rl_exception_handler(request: Request, exc: RateLimitError):
+    # 记录异常信息
+    logger.error("Uncaught exception: {0}".format(str(exc)))
+    # 返回通用异常响应
+    return JSONResponse(
+        status_code=429,
+        content={"message": str(exc)},
+    )
 
 @app.exception_handler(Exception)
 async def custom_exception_handler(request: Request, exc: Exception):
@@ -35,7 +45,7 @@ async def custom_exception_handler(request: Request, exc: Exception):
     # 返回通用异常响应
     return JSONResponse(
         status_code=500,
-        content={"message": "An unexpected error occurred"},
+        content={"message": str(exc)},
     )
 
 def fix_incomplete_utf8(words):
@@ -53,9 +63,28 @@ def fix_incomplete_utf8(words):
     if combined:
         fixed_words.append(bytes(combined))  # 添加最后的字节序列
     return fixed_words
+
+def num_tokens_from_messages(messages, model="gpt-3.5-turbo-0125"):
+    """Returns the number of tokens used by a list of messages."""
+    try:
+        encoding = tiktoken.encoding_for_model(model)
+    except KeyError:
+        encoding = tiktoken.get_encoding("cl100k_base")
+    if model == "gpt-3.5-turbo-0125":  # note: future models may deviate from this
+        num_tokens = 0
+        for message in messages:
+            num_tokens += 4  # every message follows <im_start>{role/name}\n{content}<im_end>\n
+            for key, value in message.items():
+                num_tokens += len(encoding.encode(value))
+                if key == "name":  # if there's a name, the role is omitted
+                    num_tokens += -1  # role is always required and always 1 token
+        num_tokens += 2  # every reply is primed with <im_start>assistant
+        return num_tokens
+    else:
+        raise NotImplementedError(f"""num_tokens_from_messages() is not presently implemented for model {model}.""")
     
 
-async def data_generator(sentence = "花香蕉的钱，只能请到猴子. " * 5):
+async def data_generator(sentence="花香蕉的钱，只能请到猴子. ", time_to_sleep_stream=2):
     response_id = uuid.uuid4().hex
     # a = TokenTextSplitter(model_name="gpt-3.5-turbo", chunk_size=1, chunk_overlap=0)
     # words = a.split_text(sentence)
@@ -80,17 +109,27 @@ async def data_generator(sentence = "花香蕉的钱，只能请到猴子. " * 5
 @app.post("/v1/chat/completions")
 @app.post("/openai/deployments/{model:path}/chat/completions")  # azure compatible endpoint
 async def completion(request: Request):
-    if time_to_sleep:
-        # print(f"sleeping for {time_to_sleep}")
-        await asyncio.sleep(float(time_to_sleep))
 
     data = await request.json()
-    #print(data)
-    print(time.time())
+    print(data)
+    await asyncio.sleep(float(data.get('fk_time_to_sleep', 0.1)))
+    
+    fk_error = data.get('fk_error')
+    if fk_error == 500:
+        raise ValueError('Fake Internal Server Error')
+    if fk_error == 429:
+        raise RateLimitError("A 429 status code was received; we should back off a bit.")
+
+    fk_reply = data.get('fk_reply', data['messages'][0]['content']) or 'You is my friend!'
+    prompt_tokens = num_tokens_from_messages(data['messages'])
+    encoding = tiktoken.get_encoding("cl100k_base")
+    completion_tokens = len(encoding.encode(fk_reply))
+    total_tokens = prompt_tokens + completion_tokens
 
     if data.get("stream") == True:
+        fk_time_to_sleep_stream = float(data.get('fk_time_to_sleep_stream', 0.1))
         return StreamingResponse(
-            content=data_generator(data['messages'][0]['content']),
+            content=data_generator(fk_reply, fk_time_to_sleep_stream),
             media_type="text/event-stream",
         )
     else:
@@ -106,52 +145,56 @@ async def completion(request: Request):
                     "index": 0,
                     "message": {
                         "role": "assistant",
-                        "content": "\n\nHello there, how may I assist you today?",
+                        "content": fk_reply,
                     },
                     "logprobs": None,
                     "finish_reason": "stop",
                 }
             ],
-            "usage": {"prompt_tokens": 9, "completion_tokens": 12, "total_tokens": 21},
-        }
-        return response
-
-
-# for completion
-@app.post("/completions")
-@app.post("/v1/completions")
-async def text_completion(request: Request):
-    data = await request.json()
-
-    if data.get("stream") == True:
-        return StreamingResponse(
-            content=data_generator(),
-            media_type="text/event-stream",
-        )
-    else:
-        response_id = uuid.uuid4().hex
-        response = {
-            "id": "cmpl-9B2ycsf0odECdLmrVzm2y8Q12csjW",
-            "choices": [
-                {
-                "finish_reason": "length",
-                "index": 0,
-                "logprobs": None,
-                "text": "\n\nA test request, how intriguing\nAn invitation for knowledge bringing\nWith words"
-                }
-            ],
-            "created": 1712420078,
-            "model": "gpt-3.5-turbo-instruct-0914",
-            "object": "text_completion",
-            "system_fingerprint": None,
             "usage": {
-                "completion_tokens": 16,
-                "prompt_tokens": 10,
-                "total_tokens": 26
-            }
+                "prompt_tokens": prompt_tokens, 
+                "completion_tokens": completion_tokens, 
+                "total_tokens": total_tokens
+            },
         }
-
         return response
+
+
+# # for completion
+# @app.post("/completions")
+# @app.post("/v1/completions")
+# async def text_completion(request: Request):
+#     data = await request.json()
+
+#     if data.get("stream") == True:
+#         return StreamingResponse(
+#             content=data_generator(),
+#             media_type="text/event-stream",
+#         )
+#     else:
+#         response_id = uuid.uuid4().hex
+#         response = {
+#             "id": "cmpl-9B2ycsf0odECdLmrVzm2y8Q12csjW",
+#             "choices": [
+#                 {
+#                 "finish_reason": "length",
+#                 "index": 0,
+#                 "logprobs": None,
+#                 "text": "\n\nA test request, how intriguing\nAn invitation for knowledge bringing\nWith words"
+#                 }
+#             ],
+#             "created": 1712420078,
+#             "model": "gpt-3.5-turbo-instruct-0914",
+#             "object": "text_completion",
+#             "system_fingerprint": None,
+#             "usage": {
+#                 "completion_tokens": 16,
+#                 "prompt_tokens": 10,
+#                 "total_tokens": 26
+#             }
+#         }
+
+#         return response
 
 
 
