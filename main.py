@@ -158,8 +158,47 @@ async def embeddings(request: Request):
             "total_tokens": 5
         }
     }
-    
 
+
+
+
+@app.post("/triton/embeddings")
+async def embeddings(request: Request):
+    try:
+        input_data = await request.json()
+        assert "inputs" in input_data
+
+        inputs = input_data["inputs"]
+        element_one = inputs[0]
+
+        assert "name" in element_one, "Missing name in inputs"
+        assert "shape" in element_one, "Missing shape in inputs"
+        assert "datatype" in element_one, "Missing datatype in inputs"
+        assert "data" in element_one, "Missing data in inputs"
+
+
+    except (ValueError, KeyError) as e:
+        return HTTPException(status_code=400, detail=str(e))
+
+    output_data = {
+        "model_name": "triton-embeddings",
+        "model_version": "1",
+        "parameters": {
+            "sequence_id": 0,
+            "sequence_start": False,
+            "sequence_end": False
+        },
+        "outputs": [
+            {
+                "name": "embedding_output",
+                "datatype": "FP32",
+                "shape": [124],
+                "data": [0.1, 0.2, 0.3]  # Replace with actual output data
+            }
+        ]
+    }
+
+    return output_data
     
 
 if __name__ == "__main__":
