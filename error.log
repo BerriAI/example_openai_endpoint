@@ -1,0 +1,13 @@
+2024-05-08 13:57:40.905 | ERROR    | __main__:custom_exception_handler:34 - Uncaught exception: division by zero
+2024-05-08 13:57:42.331 | ERROR    | __main__:custom_exception_handler:34 - Uncaught exception: division by zero
+2024-05-08 13:57:44.803 | ERROR    | __main__:custom_exception_handler:34 - Uncaught exception: division by zero
+2024-05-08 14:01:54.818 | ERROR    | __main__:custom_exception_handler:34 - Uncaught exception: division by zero
+2024-05-08 14:03:38.980 | ERROR    | __main__:custom_exception_handler:34 - Uncaught exception: division by zero
+2024-05-08 14:08:42.010 | ERROR    | __main__:custom_exception_handler:34 - Uncaught exception: division by zero
+2024-05-08 14:13:19.102 | ERROR    | __main__:custom_exception_handler:44 - Uncaught exception: Fake Internal Server Error
+2024-05-08 14:13:26.087 | ERROR    | __main__:rl_exception_handler:34 - Uncaught exception: A 429 status code was received; we should back off a bit.
+2024-05-08 14:15:07.260 | ERROR    | __main__:rl_exception_handler:34 - Uncaught exception: A 429 status code was received; we should back off a bit.
+2024-05-08 14:15:32.304 | ERROR    | __main__:rl_exception_handler:34 - Uncaught exception: A 429 status code was received; we should back off a bit.
+2024-05-08 14:15:44.404 | ERROR    | __main__:rl_exception_handler:34 - Uncaught exception: A 429 status code was received; we should back off a bit.
+2024-05-08 14:16:44.675 | ERROR    | __main__:rl_exception_handler:34 - Uncaught exception: A 429 status code was received; we should back off a bit.
+2024-05-08 14:48:04.068 | ERROR    | __main__:rl_exception_handler:34 - Uncaught exception: A 429 status code was received; we should back off a bit.
