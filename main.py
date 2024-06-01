@@ -52,6 +52,9 @@ async def completion(request: Request):
 
     data = await request.json()
 
+    if data.get("model") == "429":
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
+
     if data.get("stream") == True:
         return StreamingResponse(
             content=data_generator(),
