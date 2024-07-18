@@ -195,7 +195,7 @@ async def embeddings(request: Request):
             {
                 "name": "embedding_output",
                 "datatype": "FP32",
-                "shape": [124],
+                "shape": [2],
                 "data": [0.1, 0.2, 0.3]  # Replace with actual output data
             }
         ]
