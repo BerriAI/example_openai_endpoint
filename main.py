@@ -267,6 +267,30 @@ async def list_fine_tuning(request: Request):
 
 
 
+@app.post("/openai/fine_tuning/jobs/{fine_tuning_job_id:path}/cancel")  # azure compatible endpoint
+async def cancel_fine_tuning(request: Request):
+    _time_to_sleep = os.getenv("TIME_TO_SLEEP", None)
+
+    return {
+        "object": "fine_tuning.job",
+        "id": "ftjob-abc123",
+        "model": "gpt-4o-mini-2024-07-18",
+        "created_at": 1721764800,
+        "fine_tuned_model": None,
+        "organization_id": "org-123",
+        "result_files": [],
+        "hyperparameters": {
+            "n_epochs":  "auto"
+        },
+        "status": "cancelled",
+        "validation_file": "file-abc123",
+        "training_file": "file-abc123"
+    }
+
+
+
+
+
 @app.post("/openai/files")  # azure compatible endpoint
 async def openai_files(request: Request):
     _time_to_sleep = os.getenv("TIME_TO_SLEEP", None)
