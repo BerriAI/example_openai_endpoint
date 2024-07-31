@@ -202,6 +202,50 @@ async def embeddings(request: Request):
     }
 
     return output_data
+
+
+@app.post("/openai/fine_tuning/jobs")  # azure compatible endpoint
+async def fine_tuning(request: Request):
+    _time_to_sleep = os.getenv("TIME_TO_SLEEP", None)
+
+    print("inside fine tuning /jobs endpoint")
+    if _time_to_sleep is not None:
+        print("sleeping for " + _time_to_sleep)
+        await asyncio.sleep(float(_time_to_sleep))
+
+    data = await request.json()
+
+    if data.get("model") == "429":
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
+    
+    print("got request=" + json.dumps(data))
+
+    return {
+        "object": "fine_tuning.job",
+        "id": "ftjob-abc123",
+        "model": "davinci-002",
+        "created_at": 1692661014,
+        "finished_at": 1692661190,
+        "fine_tuned_model": "ft:davinci-002:my-org:custom_suffix:7q8mpxmy",
+        "organization_id": "org-123",
+        "result_files": [
+            "file-abc123"
+        ],
+        "status": "succeeded",
+        "validation_file": None,
+        "training_file": "file-abc123",
+        "hyperparameters": {
+            "n_epochs": 4,
+            "batch_size": 1,
+            "learning_rate_multiplier": 1.0
+        },
+        "trained_tokens": 5768,
+        "integrations": [],
+        "seed": 0,
+        "estimated_finish": 0
+    }
+
+
     
 
 if __name__ == "__main__":
