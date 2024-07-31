@@ -246,6 +246,26 @@ async def fine_tuning(request: Request):
     }
 
 
+@app.get("/openai/fine_tuning/jobs")  # azure compatible endpoint
+async def list_fine_tuning(request: Request):
+    _time_to_sleep = os.getenv("TIME_TO_SLEEP", None)
+
+    return {
+        "object": "list",
+        "data": [
+            {
+            "object": "fine_tuning.job.event",
+            "id": "ft-event-TjX0lMfOniCZX64t9PUQT5hn",
+            "created_at": 1689813489,
+            "level": "warn",
+            "message": "Fine tuning process stopping due to job cancellation",
+            "data": None,
+            "type": "message"
+            },
+        ], "has_more": True
+    }
+
+
 
 @app.post("/openai/files")  # azure compatible endpoint
 async def openai_files(request: Request):
