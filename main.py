@@ -246,6 +246,28 @@ async def fine_tuning(request: Request):
     }
 
 
+
+@app.post("/openai/files")  # azure compatible endpoint
+async def openai_files(request: Request):
+    _time_to_sleep = os.getenv("TIME_TO_SLEEP", None)
+
+    print("inside fine tuning /jobs endpoint")
+    if _time_to_sleep is not None:
+        print("sleeping for " + _time_to_sleep)
+        await asyncio.sleep(float(_time_to_sleep))
+
+
+    return {
+        "id": "file-abc123",
+        "object": "file",
+        "bytes": 120000,
+        "created_at": 1677610602,
+        "filename": "mydata.jsonl",
+        "purpose": "fine-tune",
+    }
+
+
+
     
 
 if __name__ == "__main__":
