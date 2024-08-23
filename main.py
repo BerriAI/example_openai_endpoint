@@ -122,6 +122,37 @@ async def text_completion(request: Request):
 
 
 
+
+# for completion
+@app.post("/invocations")
+@app.post("/invocations/")
+async def invocation(request: Request):
+    _time_to_sleep = os.getenv("TIME_TO_SLEEP", None)
+    if _time_to_sleep is not None:
+        print("sleeping for " + _time_to_sleep)
+        await asyncio.sleep(float(_time_to_sleep))
+    data = await request.json()
+    if data.get("model") == "429":
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
+    else:
+        response_id = uuid.uuid4().hex
+        return {
+            "generated_text": "This is a mock response from SageMaker.",
+            "id": "cmpl-mockid",
+            "object": "text_completion",
+            "created": 1629800000,
+            "model": "sagemaker/jumpstart-dft-hf-textgeneration1-mp-20240815-185614",
+            "choices": [
+                {
+                    "text": "This is a mock response from SageMaker.",
+                    "index": 0,
+                    "logprobs": None,
+                    "finish_reason": "length",
+                }
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 8, "total_tokens": 9},
+        }
+
 @app.post("/embeddings")
 @app.post("/v1/embeddings")
 @app.post("/openai/deployments/{model:path}/embeddings")  # azure compatible endpoint
