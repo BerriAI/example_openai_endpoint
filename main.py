@@ -7,6 +7,7 @@ import json
 import uuid
 import asyncio
 import os
+import time
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -410,6 +411,27 @@ async def generate_content(request: Request, authorization: str = Header(None)):
 
 
 
+@app.post("/runs")
+async def runs(request: Request):
+    start_time = time.perf_counter()
+    
+    # Simulate some minimal processing
+    data = await request.json()
+    
+    # Create a simple response
+    response = {
+        "id": str(uuid.uuid4()),
+        "status": "completed",
+        "created_at": int(time.time()),
+        "request": data
+    }
+    
+    # Ensure the response takes at least 0.05 ms
+    elapsed_time = (time.perf_counter() - start_time) * 1000  # Convert to milliseconds
+    if elapsed_time < 0.05:
+        time.sleep((0.05 - elapsed_time) / 1000)  # Convert back to seconds for sleep
+    
+    return response
     
 
 if __name__ == "__main__":
