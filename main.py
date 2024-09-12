@@ -412,6 +412,7 @@ async def generate_content(request: Request, authorization: str = Header(None)):
 
 
 @app.post("/runs")
+@app.post("/runs/batch")
 async def runs(request: Request):
     start_time = time.perf_counter()
     
@@ -433,6 +434,54 @@ async def runs(request: Request):
     
     return response
     
+
+@app.post("/traces")
+async def traces(request: Request):
+    try:
+        start_time = time.perf_counter()
+        
+        # Attempt to parse the request body
+        try:
+            data = await request.json()
+        except json.JSONDecodeError:
+            # If JSON parsing fails, try to read the raw body
+            body = await request.body()
+            return HTTPException(status_code=400, detail=f"Invalid JSON: {body.decode('utf-8', errors='ignore')}")
+        except UnicodeDecodeError:
+            # If decoding fails, return an error about invalid encoding
+            return HTTPException(status_code=400, detail="Request body is not valid UTF-8 encoded")
+        
+        # Rest of the function remains the same
+        response = {
+            "id": str(uuid.uuid4()),
+            "status": "completed",
+            "created_at": int(time.time()),
+            "trace_data": {
+                "events": [
+                    {
+                        "timestamp": int(time.time()),
+                        "type": "start",
+                        "details": "Trace started"
+                    },
+                    {
+                        "timestamp": int(time.time()) + 1,
+                        "type": "end",
+                        "details": "Trace completed"
+                    }
+                ],
+            }
+        }
+        
+        # Ensure the response takes at least 0.05 ms
+        elapsed_time = (time.perf_counter() - start_time) * 1000  # Convert to milliseconds
+        if elapsed_time < 0.05:
+            time.sleep((0.05 - elapsed_time) / 1000)  # Convert back to seconds for sleep
+        
+        return response
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
