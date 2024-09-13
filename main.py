@@ -8,6 +8,7 @@ import uuid
 import asyncio
 import os
 import time
+import random
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -56,6 +57,11 @@ async def completion(request: Request):
     if data.get("model") == "429":
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
 
+    if data.get("model") == "random_sleep":
+        # sleep for a random time between 1 and 10 seconds
+        sleep_time = random.randint(1, 10)
+        print("sleeping for " + str(sleep_time) + " seconds")
+        await asyncio.sleep(sleep_time)
     if data.get("stream") == True:
         return StreamingResponse(
             content=data_generator(),
