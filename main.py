@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, status, HTTPException, Depends, Header
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
@@ -488,6 +488,53 @@ async def traces(request: Request):
         import traceback
         traceback.print_exc()
         return HTTPException(status_code=500, detail=str(e))
+
+import gzip
+import io
+
+@app.post("/api/v2/logs")
+async def logs(request: Request):
+    start_time = time.perf_counter()
+    
+    # Check if the content is gzipped
+    content_encoding = request.headers.get("Content-Encoding", "").lower()
+    
+    # Read the raw body
+    body = await request.body()
+    
+    # Decompress if gzipped
+    if content_encoding == "gzip":
+        try:
+            body = gzip.decompress(body)
+        except gzip.BadGzipFile:
+            return HTTPException(status_code=400, detail="Invalid gzip data")
+    
+    # Attempt to parse the request body
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        return HTTPException(status_code=400, detail=f"Invalid JSON: {body.decode('utf-8', errors='ignore')}")
+    except UnicodeDecodeError:
+        return HTTPException(status_code=400, detail="Request body is not valid UTF-8 encoded")
+    
+    # Create a log response
+    response = {
+        "id": str(uuid.uuid4()),
+        "timestamp": int(time.time()),
+        "level": "info",
+        "message": "Log entry received",
+        "data": data
+    }
+    
+    # Ensure the response takes at least 0.05 ms
+    elapsed_time = (time.perf_counter() - start_time) * 1000  # Convert to milliseconds
+    if elapsed_time < 0.05:
+        time.sleep((0.05 - elapsed_time) / 1000)  # Convert back to seconds for sleep
+    
+    return Response(
+        content=json.dumps(response),
+        status_code=202,
+    )
 
 if __name__ == "__main__":
     import uvicorn
