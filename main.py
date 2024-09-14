@@ -357,6 +357,14 @@ async def openai_files(request: Request):
     }
 
 
+### FAKE BEDROCK ENDPOINT ### 
+
+@app.post("/model/{modelId}/converse")
+async def fake_bedrock_endpoint(request: Request):
+    return {"metrics":{"latencyMs":393},"output":{"message":{"content":[{"text":"Good morning to you too! I am not Claude, however. Claude is a large language model trained by Google, while I am Gemini, a multi-modal AI model, developed by Google as well. Is there anything I can help you with today?"}],"role":"assistant"}},"stopReason":"end_turn","usage":{"inputTokens":37,"outputTokens":8,"totalTokens":45}}
+
+### FAKE VERTEX ENDPOINT ### 
+
 import random
 
 request_counter = 0
