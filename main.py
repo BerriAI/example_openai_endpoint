@@ -10,10 +10,18 @@ import os
 import time
 import random
 from dotenv import load_dotenv
+from slowapi import Limiter
+
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+limiter = Limiter(key_func=get_remote_address)
 load_dotenv()
 
 app = FastAPI()
-
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -349,12 +357,27 @@ async def openai_files(request: Request):
     }
 
 
+import random
+
+request_counter = 0
 
 @app.post("/generateContent")
 @app.post("/v1/projects/adroit-crow-413218/locations/us-central1/publishers/google/models/gemini-1.0-pro-vision-001:generateContent")
+@limiter.limit("10000/minute")
 async def generate_content(request: Request, authorization: str = Header(None)):
+    global request_counter
+    request_counter += 1
+
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Invalid or missing Authorization header")
+
+    # Raise an error for every 200th request
+    if request_counter % 200 == 0:
+        raise HTTPException(status_code=500, detail="Internal Server Error: Simulated error for every 200th request")
+
+    # Introduce a 0.5% chance of error for other requests
+    if random.random() < 0.005:
+        raise HTTPException(status_code=500, detail="Internal Server Error: Random error (0.5% chance)")
 
     data = await request.json()
     
