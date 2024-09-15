@@ -365,12 +365,79 @@ async def fake_bedrock_endpoint(request: Request):
 
 ### FAKE VERTEX ENDPOINT ### 
 
+
+@app.post("/generateContent")
+@app.post("/v1/projects/adroit-crow-413218/locations/us-central1/publishers/google/models/gemini-1.0-pro-vision-001:generateContent")
+async def generate_content(request: Request, authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid or missing Authorization header")
+
+    data = await request.json()
+    
+    # You can process the input data here if needed
+    # For now, we'll just return the hardcoded response
+
+    response = {
+        "candidates": [
+            {
+                "content": {
+                    "role": "model",
+                    "parts": [
+                        {
+                            "text": "Good morning to you too! I am not Claude, however. Claude is a large language model trained by Google, while I am Gemini, a multi-modal AI model, developed by Google as well. Is there anything I can help you with today?"
+                        }
+                    ]
+                },
+                "finishReason": "STOP",
+                "safetyRatings": [
+                    {
+                        "category": "HARM_CATEGORY_HATE_SPEECH",
+                        "probability": "NEGLIGIBLE",
+                        "probabilityScore": 0.037353516,
+                        "severity": "HARM_SEVERITY_NEGLIGIBLE",
+                        "severityScore": 0.03515625
+                    },
+                    {
+                        "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                        "probability": "NEGLIGIBLE",
+                        "probabilityScore": 0.017944336,
+                        "severity": "HARM_SEVERITY_NEGLIGIBLE",
+                        "severityScore": 0.020019531
+                    },
+                    {
+                        "category": "HARM_CATEGORY_HARASSMENT",
+                        "probability": "NEGLIGIBLE",
+                        "probabilityScore": 0.06738281,
+                        "severity": "HARM_SEVERITY_NEGLIGIBLE",
+                        "severityScore": 0.03173828
+                    },
+                    {
+                        "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                        "probability": "NEGLIGIBLE",
+                        "probabilityScore": 0.11279297,
+                        "severity": "HARM_SEVERITY_NEGLIGIBLE",
+                        "severityScore": 0.057373047
+                    }
+                ],
+                "avgLogprobs": -0.30250951355578853
+            }
+        ],
+        "usageMetadata": {
+            "promptTokenCount": 5,
+            "candidatesTokenCount": 51,
+            "totalTokenCount": 56
+        }
+    }
+
+    return response
+
+
 import random
 
 request_counter = 0
 
 @app.post("/generateContent")
-@app.post("/v1/projects/adroit-crow-413218/locations/us-central1/publishers/google/models/gemini-1.0-pro-vision-001:generateContent")
+@app.post("/v1/projects/bad-adroit-crow-413218/locations/us-central1/publishers/google/models/gemini-1.0-pro-vision-001:generateContent")
 @limiter.limit("10000/minute")
 async def generate_content(request: Request, authorization: str = Header(None)):
     global request_counter
@@ -445,7 +512,6 @@ async def generate_content(request: Request, authorization: str = Header(None)):
     }
 
     return response
-
 
 
 @app.post("/runs")
