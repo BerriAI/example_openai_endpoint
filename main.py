@@ -371,7 +371,7 @@ request_counter = 0
 
 @app.post("/generateContent")
 @app.post("/v1/projects/adroit-crow-413218/locations/us-central1/publishers/google/models/gemini-1.0-pro-vision-001:generateContent")
-@limiter.limit("1000/minute")
+@limiter.limit("5/minute")
 async def generate_content(request: Request, authorization: str = Header(None)):
     global request_counter
     request_counter += 1
