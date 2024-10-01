@@ -81,7 +81,7 @@ async def completion(request: Request):
             "id": f"chatcmpl-{response_id}",
             "object": "chat.completion",
             "created": 1677652288,
-            "model": "gpt-3.5-turbo-0125",
+            "model": "gpt-12",
             "system_fingerprint": "fp_44709d6fcb",
             "choices": [
                 {
