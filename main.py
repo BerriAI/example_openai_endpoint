@@ -11,6 +11,10 @@ import time
 import random
 from dotenv import load_dotenv
 from slowapi import Limiter
+from collections import deque
+from datetime import datetime, timedelta
+from typing import List, Dict, Any
+from pydantic import BaseModel
 
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -633,6 +637,35 @@ async def logs(request: Request):
         content=json.dumps(response),
         status_code=202,
     )
+slack_requests = deque(maxlen=10)
+slack_requests = deque(maxlen=10)
+
+class SlackRequest(BaseModel):
+    timestamp: datetime
+    data: Dict[str, Any]
+
+@app.post("/slack")
+async def slack_endpoint(request: Request):
+    current_time = datetime.now()
+    request_data = await request.json()
+
+    # Add the current request to the deque
+    slack_requests.append(SlackRequest(timestamp=current_time, data=request_data))
+
+    # Remove requests older than 10 minutes
+    slack_requests_list = list(slack_requests)
+    slack_requests_list = [req for req in slack_requests_list if current_time - req.timestamp <= timedelta(minutes=10)]
+    slack_requests.clear()
+    slack_requests.extend(slack_requests_list)
+
+    return {"message": "Request received and stored"}
+
+@app.get("/slack/history", response_model=List[SlackRequest])
+async def get_slack_history():
+    return list(slack_requests)
+
+
+
 
 if __name__ == "__main__":
     import uvicorn
