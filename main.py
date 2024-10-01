@@ -82,7 +82,7 @@ async def completion(request: Request):
     else:
         _model = data.get("model")
         if _model == "gpt-5":
-            _model == "gpt-12"
+            _model = "gpt-12"
         else:
             _model = "gpt-3.5-turbo-0301"
         response_id = uuid.uuid4().hex
