@@ -76,12 +76,13 @@ async def completion(request: Request):
             media_type="text/event-stream",
         )
     else:
+        _model = data.get("model")
         response_id = uuid.uuid4().hex
         response = {
             "id": f"chatcmpl-{response_id}",
             "object": "chat.completion",
             "created": 1677652288,
-            "model": "gpt-12",
+            "model": _model,
             "system_fingerprint": "fp_44709d6fcb",
             "choices": [
                 {
