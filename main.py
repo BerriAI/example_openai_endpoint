@@ -523,6 +523,46 @@ async def generate_content(request: Request, authorization: str = Header(None)):
     return response
 
 
+
+@app.post("/predict")
+@app.post("/v1/projects/adroit-crow-413218/locations/us-central1/publishers/google/models/textembedding-gecko@001:predict")
+async def predict(request: Request, authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid or missing Authorization header")
+
+    data = await request.json()
+    
+    # Process the input data
+    instances = data.get('instances', [])
+    num_instances = len(instances)
+    
+    # Generate fake embeddings
+    predictions = []
+    for _ in range(num_instances):
+        embedding = [random.uniform(-0.15, 0.15) for _ in range(768)]  # 768-dimensional embedding
+        predictions.append({
+            "embeddings": {
+                "values": embedding,
+                "statistics": {
+                    "truncated": False,
+                    "token_count": random.randint(4, 10)
+                }
+            }
+        })
+
+    # Calculate billable character count
+    billable_character_count = sum(len(instance.get('content', '')) for instance in instances)
+
+    response = {
+        "predictions": predictions,
+        "metadata": {
+            "billableCharacterCount": billable_character_count
+        }
+    }
+
+    return response
+
+
 @app.post("/runs")
 @app.post("/runs/batch")
 async def runs(request: Request):
