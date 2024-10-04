@@ -447,7 +447,7 @@ request_counter = 0
 
 @app.post("/generateContent")
 @app.post("/v1/projects/bad-adroit-crow-413218/locations/us-central1/publishers/google/models/gemini-1.0-pro-vision-001:generateContent")
-@limiter.limit("10000/minute")
+@limiter.limit("10/minute")
 async def generate_content(request: Request, authorization: str = Header(None)):
     global request_counter
     request_counter += 1
@@ -456,7 +456,7 @@ async def generate_content(request: Request, authorization: str = Header(None)):
         raise HTTPException(status_code=401, detail="Invalid or missing Authorization header")
 
     # Raise an error for every 200th request
-    if request_counter % 200 == 0:
+    if request_counter % 10 == 0:
         raise HTTPException(status_code=500, detail="Internal Server Error: Simulated error for every 200th request")
 
     # Introduce a 0.5% chance of error for other requests
