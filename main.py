@@ -185,33 +185,21 @@ async def invocation(request: Request):
 @app.post("/v1/embeddings")
 @app.post("/openai/deployments/{model:path}/embeddings")  # azure compatible endpoint
 async def embeddings(request: Request):
+    _small_embedding = [
+        -0.006929283495992422,
+        -0.005336422007530928,
+        -4.547132266452536e-05,
+        -0.024047505110502243,
+    ]
+
+    big_embedding = _small_embedding * 100
     return {
         "object": "list",
         "data": [
             {
             "object": "embedding",
             "index": 0,
-            "embedding": [
-                -0.006929283495992422,
-                -0.005336422007530928,
-                -4.547132266452536e-05,
-                -0.024047505110502243,
-                -0.005336422007530928,
-                -4.547132266452536e-05,
-                -0.024047505110502243,
-                -0.005336422007530928,
-                -4.547132266452536e-05,
-                -0.024047505110502243,
-                -0.005336422007530928,
-                -4.547132266452536e-05,
-                -0.024047505110502243,
-                -0.005336422007530928,
-                -4.547132266452536e-05,
-                -0.024047505110502243,
-                -0.005336422007530928,
-                -4.547132266452536e-05,
-                -0.024047505110502243
-            ],
+            "embedding": big_embedding
             }
         ],
         "model": "text-embedding-3-small",
