@@ -704,6 +704,61 @@ async def get_slack_history():
 
 
 
+
+def data_generator_anthropic():
+    response_id = uuid.uuid4().hex
+    sentence = "Hello this is a test response from a fixed OpenAI endpoint."
+    words = sentence.split(" ")
+    for word in words:
+        word = word + " "
+        chunk = {
+                    "id": f"chatcmpl-{response_id}",
+                    "object": "chat.completion.chunk",
+                    "created": 1677652288,
+                    "model": "gpt-3.5-turbo-0125",
+                    "choices": [{"index": 0, "delta": {"content": word}}],
+                }
+        try:
+            yield f"data: {json.dumps(chunk.dict())}\n\n"
+        except:
+            yield f"data: {json.dumps(chunk)}\n\n"
+
+
+# for completion
+@app.post("/v1/messages")
+async def completion_anthropic(request: Request):
+    data = await request.json()
+
+    if data.get("stream") == True:
+        return StreamingResponse(
+            content=data_generator_anthropic(),
+            media_type="text/event-stream",
+        )
+    else:
+        response = {
+            "id": "msg_01G7MsdWPT2JZMUuc1UXRavn",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {
+                "type": "text",
+                "text": "I'm sorry, but the string of characters \"123450000s0 p kk\" doesn't appear to have any clear meaning or context. It seems to be a random combination of numbers and letters. If you could provide more information or clarify what you're trying to communicate, I'll do my best to assist you."
+                }
+            ],
+            "model": "claude-3-opus-20240229",
+            "stop_reason": "end_turn",
+            "stop_sequence": None,
+            "usage": {
+                "input_tokens": 17,
+                "output_tokens": 71
+            }
+        }
+
+        return response
+
+
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8090)
