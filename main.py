@@ -369,6 +369,7 @@ async def fake_bedrock_endpoint(request: Request):
 
 @app.post("/generateContent")
 @app.post("/v1/projects/adroit-crow-413218/locations/us-central1/publishers/google/models/gemini-1.0-pro-vision-001:generateContent")
+@app.post("/v1/projects/pathrise-convert-1606954137718/locations/us-central1/publishers/google/models/gemini-1.0-pro-vision-001:generateContent")
 @app.post("/v1beta/models/gemini-1.5-flash:generateContent")
 async def generate_content(request: Request, authorization: str = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
@@ -519,6 +520,7 @@ async def generate_content_bad(request: Request, authorization: str = Header(Non
 
 @app.post("/predict")
 @app.post("/v1/projects/adroit-crow-413218/locations/us-central1/publishers/google/models/textembedding-gecko@001:predict")
+@app.post("/v1/projects/pathrise-convert-1606954137718/locations/us-central1/publishers/google/models/textembedding-gecko@001:predict")
 async def predict(request: Request, authorization: str = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Invalid or missing Authorization header")
