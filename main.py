@@ -635,6 +635,8 @@ import io
 
 @app.post("/api/v2/logs")
 async def logs(request: Request):
+    await asyncio.sleep(60)  # Wait for 1 second
+    return {"status": "done"}
     start_time = time.perf_counter()
     
     # Check if the content is gzipped
@@ -726,6 +728,7 @@ def data_generator_anthropic():
             yield f"data: {json.dumps(chunk)}\n\n"
 
 
+
 # for completion
 @app.post("/v1/messages")
 async def completion_anthropic(request: Request):
@@ -759,7 +762,37 @@ async def completion_anthropic(request: Request):
         return response
 
 
+seen_langfuse_request_ids = set()
 
+@app.post("/api/public/ingestion")
+async def ingestion(request: Request):
+    try:
+        global seen_langfuse_request_ids
+        data = await request.json()
+        
+        # Extract request IDs from the batch
+        for item in data.get('batch', []):
+            if item.get('type') == 'generation-create':
+                full_request_id = item.get('body', {}).get('id')
+                if full_request_id and '_' in full_request_id:
+                    # Split on underscore and take the second part (the chatcmpl ID)
+                    clean_request_id = full_request_id.split('_')[1]
+                    seen_langfuse_request_ids.add(clean_request_id)
+        
+        print(f"Stored request IDs (total: {len(seen_langfuse_request_ids)}): {seen_langfuse_request_ids}")
+        await asyncio.sleep(1)  # Original delay
+        return {"status": "done", "stored_ids_count": len(seen_langfuse_request_ids)}
+    
+    except Exception as e:
+        print(f"Error processing ingestion request: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
+
+@app.get("/langfuse/trace/{request_id}")
+async def has_request_id(request_id: str):
+    return {
+        "exists": request_id in seen_langfuse_request_ids,
+        "request_id": request_id
+    }
 
 if __name__ == "__main__":
     import uvicorn
