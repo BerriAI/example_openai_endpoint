@@ -136,7 +136,7 @@ async def text_completion(request: Request):
                 }
             ],
             "created": 1712420078,
-            "model": "gpt-3.5-turbo-instruct-0914",
+            "model": "unknown",
             "object": "text_completion",
             "system_fingerprint": None,
             "usage": {
@@ -760,6 +760,11 @@ async def completion_anthropic(request: Request):
         }
 
         return response
+
+@app.post("/load_test/api/public/ingestion")
+async def mock_ingestion(request: Request):
+    time.sleep(0.5)
+    return {"status": "done"}
 
 
 seen_langfuse_request_ids = set()
