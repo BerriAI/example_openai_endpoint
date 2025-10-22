@@ -16,6 +16,8 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any
 from pydantic import BaseModel
 
+from batch_and_files_api import router as batch_files_router
+
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -37,6 +39,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include the batch and files router with /v1 prefix
+app.include_router(batch_files_router, prefix="/v1")
 
 
 def data_generator():
@@ -798,6 +803,7 @@ async def has_request_id(request_id: str):
         "exists": request_id in seen_langfuse_request_ids,
         "request_id": request_id
     }
+
 
 if __name__ == "__main__":
     import uvicorn
