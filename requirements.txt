@@ -2,4 +2,6 @@ fastapi
 uvicorn
 slowapi
 uuid
+python-multipart
+pydantic
 python-dotenv>=0.2.0 # for env 
