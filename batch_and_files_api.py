@@ -53,6 +53,7 @@ class CreateBatchRequest(BaseModel):
     endpoint: Literal["/v1/chat/completions", "/v1/embeddings", "/v1/completions"]
     completion_window: Literal["24h"]
     metadata: Optional[Dict[str, str]] = None
+    status: str
 
 
 # ============= Files Endpoints =============
@@ -79,6 +80,7 @@ async def create_file(
         created_at=int(datetime.now().timestamp()),
         filename=file.filename or "uploaded_file",
         purpose=purpose
+        status="completed"
     )
 
 
@@ -95,7 +97,8 @@ async def retrieve_file(file_id: str):
         bytes=1024,  # Stubbed file size
         created_at=1698768000,  # Stubbed timestamp
         filename="example_file.jsonl",
-        purpose="batch"
+        purpose="batch",
+        status="completed"
     )
 
 
