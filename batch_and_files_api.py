@@ -17,6 +17,7 @@ class FileObject(BaseModel):
     created_at: int
     filename: str
     purpose: str
+    status: str
 
 
 class BatchRequestCounts(BaseModel):
@@ -79,7 +80,7 @@ async def create_file(
         bytes=len(content),
         created_at=int(datetime.now().timestamp()),
         filename=file.filename or "uploaded_file",
-        purpose=purpose
+        purpose=purpose,
         status="completed"
     )
 
