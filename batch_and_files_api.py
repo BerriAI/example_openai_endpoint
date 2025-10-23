@@ -1,14 +1,11 @@
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-# In-memory storage (replace with your actual storage)
 from pydantic import BaseModel
 from typing import Dict, Literal, Optional
 import uuid
+import hashlib
 from datetime import datetime
 
 router = APIRouter()
-
-files_store = {}
-batches_store = {}
 
 
 # ============= Models =============
@@ -70,26 +67,17 @@ async def create_file(
     
     Compatible with: https://platform.openai.com/docs/api-reference/files/create
     """
-    file_id = f"file-{uuid.uuid4().hex}"
     content = await file.read()
     
-    file_obj = {
-        "id": file_id,
-        "object": "file",
-        "bytes": len(content),
-        "created_at": int(datetime.now().timestamp()),
-        "filename": file.filename,
-        "purpose": purpose,
-        "content": content
-    }
-    
-    files_store[file_id] = file_obj
+    # Generate consistent file ID based on filename and content
+    content_hash = hashlib.md5(f"{file.filename}{len(content)}".encode()).hexdigest()[:8]
+    file_id = f"file-{content_hash}"
     
     return FileObject(
         id=file_id,
         bytes=len(content),
-        created_at=file_obj["created_at"],
-        filename=file.filename,
+        created_at=int(datetime.now().timestamp()),
+        filename=file.filename or "uploaded_file",
         purpose=purpose
     )
 
@@ -101,16 +89,13 @@ async def retrieve_file(file_id: str):
     
     Compatible with: https://platform.openai.com/docs/api-reference/files/retrieve
     """
-    if file_id not in files_store:
-        raise HTTPException(status_code=404, detail="File not found")
-    
-    file_obj = files_store[file_id]
+    # Return stubbed file information
     return FileObject(
-        id=file_obj["id"],
-        bytes=file_obj["bytes"],
-        created_at=file_obj["created_at"],
-        filename=file_obj["filename"],
-        purpose=file_obj["purpose"]
+        id=file_id,
+        bytes=1024,  # Stubbed file size
+        created_at=1698768000,  # Stubbed timestamp
+        filename="example_file.jsonl",
+        purpose="batch"
     )
 
 
@@ -121,11 +106,9 @@ async def retrieve_file_content(file_id: str):
     
     Compatible with: https://platform.openai.com/docs/api-reference/files/retrieve-contents
     """
-    if file_id not in files_store:
-        raise HTTPException(status_code=404, detail="File not found")
-    
-    file_obj = files_store[file_id]
-    return file_obj["content"].decode("utf-8")
+    # Return stubbed file content
+    stubbed_content = '{"custom_id": "request-1", "method": "POST", "url": "/v1/chat/completions", "body": {"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": "Hello world"}]}}\n{"custom_id": "request-2", "method": "POST", "url": "/v1/chat/completions", "body": {"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": "How are you?"}]}}'
+    return stubbed_content
 
 
 @router.delete("/files/{file_id}")
@@ -135,10 +118,7 @@ async def delete_file(file_id: str):
     
     Compatible with: https://platform.openai.com/docs/api-reference/files/delete
     """
-    if file_id not in files_store:
-        raise HTTPException(status_code=404, detail="File not found")
-    
-    del files_store[file_id]
+    # Return stubbed deletion response
     return {"id": file_id, "object": "file", "deleted": True}
 
 
@@ -151,44 +131,34 @@ async def create_batch(request: CreateBatchRequest):
     
     Compatible with: https://platform.openai.com/docs/api-reference/batch/create
     """
-    if request.input_file_id not in files_store:
-        raise HTTPException(status_code=400, detail="Input file not found")
-    
-    batch_id = f"batch_{uuid.uuid4().hex}"
+    # Generate consistent batch ID based on input file ID
+    batch_hash = hashlib.md5(request.input_file_id.encode()).hexdigest()[:8]
+    batch_id = f"batch_{batch_hash}"
     created_at = int(datetime.now().timestamp())
     
-    # Simulate batch processing (replace with actual vLLM batch processing)
-    batch_obj = {
-        "id": batch_id,
-        "object": "batch",
-        "endpoint": request.endpoint,
-        "errors": None,
-        "input_file_id": request.input_file_id,
-        "completion_window": request.completion_window,
-        "status": "validating",
-        "output_file_id": None,
-        "error_file_id": None,
-        "created_at": created_at,
-        "in_progress_at": None,
-        "expires_at": created_at + 86400,  # 24 hours
-        "finalizing_at": None,
-        "completed_at": None,
-        "failed_at": None,
-        "expired_at": None,
-        "cancelling_at": None,
-        "cancelled_at": None,
-        "request_counts": None,
-        "metadata": request.metadata or {}
-    }
-    
-    batches_store[batch_id] = batch_obj
-    
-    # TODO: Trigger actual batch processing with vLLM here
-    # For now, immediately move to in_progress
-    batch_obj["status"] = "in_progress"
-    batch_obj["in_progress_at"] = int(datetime.now().timestamp())
-    
-    return BatchObject(**batch_obj)
+    # Return stubbed batch object
+    return BatchObject(
+        id=batch_id,
+        object="batch",
+        endpoint=request.endpoint,
+        errors=None,
+        input_file_id=request.input_file_id,
+        completion_window=request.completion_window,
+        status="completed",
+        output_file_id=f"file-output-{batch_hash}",
+        error_file_id=None,
+        created_at=created_at,
+        in_progress_at=created_at + 10,
+        expires_at=created_at + 86400,  # 24 hours
+        finalizing_at=created_at + 300,
+        completed_at=created_at + 600,
+        failed_at=None,
+        expired_at=None,
+        cancelling_at=None,
+        cancelled_at=None,
+        request_counts=BatchRequestCounts(total=2, completed=2, failed=0),
+        metadata=request.metadata or {}
+    )
 
 
 @router.get("/batches/{batch_id}", response_model=BatchObject)
@@ -198,18 +168,33 @@ async def retrieve_batch(batch_id: str):
     
     Compatible with: https://platform.openai.com/docs/api-reference/batch/retrieve
     """
-    if batch_id not in batches_store:
-        raise HTTPException(status_code=404, detail="Batch not found")
+    # Extract hash from batch_id for consistent output file ID
+    batch_hash = batch_id.split("_")[-1] if "_" in batch_id else "stubbed"
+    created_at = 1698768000  # Stubbed timestamp
     
-    batch_obj = batches_store[batch_id]
-    
-    # TODO: Check actual batch status from vLLM
-    # Simulate completion for demo
-    if batch_obj["status"] == "in_progress":
-        # You would check your actual batch processing status here
-        pass
-    
-    return BatchObject(**batch_obj)
+    # Return stubbed batch object
+    return BatchObject(
+        id=batch_id,
+        object="batch",
+        endpoint="/v1/chat/completions",
+        errors=None,
+        input_file_id=f"file-{batch_hash}",
+        completion_window="24h",
+        status="completed",
+        output_file_id=f"file-output-{batch_hash}",
+        error_file_id=None,
+        created_at=created_at,
+        in_progress_at=created_at + 10,
+        expires_at=created_at + 86400,
+        finalizing_at=created_at + 300,
+        completed_at=created_at + 600,
+        failed_at=None,
+        expired_at=None,
+        cancelling_at=None,
+        cancelled_at=None,
+        request_counts=BatchRequestCounts(total=2, completed=2, failed=0),
+        metadata={}
+    )
 
 
 @router.post("/batches/{batch_id}/cancel", response_model=BatchObject)
@@ -219,24 +204,34 @@ async def cancel_batch(batch_id: str):
     
     Compatible with: https://platform.openai.com/docs/api-reference/batch/cancel
     """
-    if batch_id not in batches_store:
-        raise HTTPException(status_code=404, detail="Batch not found")
+    # Extract hash from batch_id for consistent output file ID
+    batch_hash = batch_id.split("_")[-1] if "_" in batch_id else "stubbed"
+    created_at = 1698768000  # Stubbed timestamp
+    cancelled_at = int(datetime.now().timestamp())
     
-    batch_obj = batches_store[batch_id]
-    
-    if batch_obj["status"] not in ["validating", "in_progress"]:
-        raise HTTPException(status_code=400, detail="Batch cannot be cancelled")
-    
-    batch_obj["status"] = "cancelling"
-    batch_obj["cancelling_at"] = int(datetime.now().timestamp())
-    
-    # TODO: Actually cancel the batch processing
-    
-    # Simulate immediate cancellation
-    batch_obj["status"] = "cancelled"
-    batch_obj["cancelled_at"] = int(datetime.now().timestamp())
-    
-    return BatchObject(**batch_obj)
+    # Return stubbed cancelled batch object
+    return BatchObject(
+        id=batch_id,
+        object="batch",
+        endpoint="/v1/chat/completions",
+        errors=None,
+        input_file_id=f"file-{batch_hash}",
+        completion_window="24h",
+        status="cancelled",
+        output_file_id=None,
+        error_file_id=None,
+        created_at=created_at,
+        in_progress_at=created_at + 10,
+        expires_at=created_at + 86400,
+        finalizing_at=None,
+        completed_at=None,
+        failed_at=None,
+        expired_at=None,
+        cancelling_at=cancelled_at - 5,
+        cancelled_at=cancelled_at,
+        request_counts=BatchRequestCounts(total=2, completed=0, failed=0),
+        metadata={}
+    )
 
 
 @router.get("/batches")
@@ -246,23 +241,66 @@ async def list_batches(limit: int = 20, after: Optional[str] = None):
     
     Compatible with: https://platform.openai.com/docs/api-reference/batch/list
     """
-    batches_list = list(batches_store.values())
+    # Return stubbed list of batches
+    stubbed_batches = [
+        BatchObject(
+            id="batch_example1",
+            object="batch",
+            endpoint="/v1/chat/completions",
+            errors=None,
+            input_file_id="file-example1",
+            completion_window="24h",
+            status="completed",
+            output_file_id="file-output-example1",
+            error_file_id=None,
+            created_at=1698768000,
+            in_progress_at=1698768010,
+            expires_at=1698854400,
+            finalizing_at=1698768300,
+            completed_at=1698768600,
+            failed_at=None,
+            expired_at=None,
+            cancelling_at=None,
+            cancelled_at=None,
+            request_counts=BatchRequestCounts(total=5, completed=5, failed=0),
+            metadata={}
+        ),
+        BatchObject(
+            id="batch_example2",
+            object="batch",
+            endpoint="/v1/embeddings",
+            errors=None,
+            input_file_id="file-example2",
+            completion_window="24h",
+            status="in_progress",
+            output_file_id=None,
+            error_file_id=None,
+            created_at=1698767000,
+            in_progress_at=1698767010,
+            expires_at=1698853400,
+            finalizing_at=None,
+            completed_at=None,
+            failed_at=None,
+            expired_at=None,
+            cancelling_at=None,
+            cancelled_at=None,
+            request_counts=BatchRequestCounts(total=3, completed=1, failed=0),
+            metadata={"project": "test"}
+        )
+    ]
     
-    # Sort by created_at descending
-    batches_list.sort(key=lambda x: x["created_at"], reverse=True)
-    
-    # Handle pagination
+    # Apply pagination logic to stubbed data
     if after:
         try:
-            start_idx = next(i for i, b in enumerate(batches_list) if b["id"] == after) + 1
-            batches_list = batches_list[start_idx:]
+            start_idx = next(i for i, b in enumerate(stubbed_batches) if b.id == after) + 1
+            stubbed_batches = stubbed_batches[start_idx:]
         except StopIteration:
             pass
     
-    batches_list = batches_list[:limit]
+    stubbed_batches = stubbed_batches[:limit]
     
     return {
         "object": "list",
-        "data": [BatchObject(**b) for b in batches_list],
-        "has_more": len(batches_store) > len(batches_list)
+        "data": stubbed_batches,
+        "has_more": False  # Stubbed - no more data
     }
