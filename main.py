@@ -815,7 +815,7 @@ def responses_data_generator(input_text=""):
     current_time = int(time.time())
     
     # 1. Send response.created event
-    yield f"data: {json.dumps({
+    response_created = {
         'type': 'response.created',
         'response': {
             'id': f'resp_{response_id}',
@@ -825,10 +825,11 @@ def responses_data_generator(input_text=""):
             'status': 'in_progress',
             'output': []
         }
-    })}\n\n"
+    }
+    yield f"data: {json.dumps(response_created)}\n\n"
     
     # 2. Send output_item.added event
-    yield f"data: {json.dumps({
+    output_item_added = {
         'type': 'response.output_item.added',
         'output_index': 0,
         'item': {
@@ -838,29 +839,32 @@ def responses_data_generator(input_text=""):
             'status': 'in_progress',
             'content': []
         }
-    })}\n\n"
+    }
+    yield f"data: {json.dumps(output_item_added)}\n\n"
     
     # 3. Send text deltas
     for word in words:
-        yield f"data: {json.dumps({
+        text_delta = {
             'type': 'response.output_text.delta',
             'item_id': item_id,
             'output_index': 0,
             'content_index': 0,
             'delta': word + ' '
-        })}\n\n"
+        }
+        yield f"data: {json.dumps(text_delta)}\n\n"
     
     # 4. Send output_text.done event
-    yield f"data: {json.dumps({
+    output_text_done = {
         'type': 'response.output_text.done',
         'item_id': item_id,
         'output_index': 0,
         'content_index': 0,
         'text': sentence
-    })}\n\n"
+    }
+    yield f"data: {json.dumps(output_text_done)}\n\n"
     
     # 5. Send response.completed event
-    yield f"data: {json.dumps({
+    response_completed = {
         'type': 'response.completed',
         'response': {
             'id': f'resp_{response_id}',
@@ -881,7 +885,8 @@ def responses_data_generator(input_text=""):
                 'total_tokens': (len(input_text.split()) if input_text else 0) + len(sentence.split())
             }
         }
-    })}\n\n"
+    }
+    yield f"data: {json.dumps(response_completed)}\n\n"
     
     # 6. Send [DONE]
     yield "data: [DONE]\n\n"
