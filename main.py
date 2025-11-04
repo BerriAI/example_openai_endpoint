@@ -215,6 +215,136 @@ async def embeddings(request: Request):
     }
 
 
+### OPENAI RESPONSES API ###
+
+# for responses
+def responses_data_generator():
+    """Generator for streaming Responses API chunks"""
+    response_id = uuid.uuid4().hex
+    sentence = "Hello this is a test response from the OpenAI Responses API endpoint."
+    words = sentence.split(" ")
+    for word in words:
+        word = word + " "
+        chunk = {
+            "id": f"resp_{response_id}",
+            "object": "response.chunk",
+            "created": 1677652288,
+            "model": "gpt-4.1",
+            "delta": {
+                "output_text": word
+            }
+        }
+        try:
+            yield f"data: {json.dumps(chunk.dict())}\n\n"
+        except:
+            yield f"data: {json.dumps(chunk)}\n\n"
+    # Send final chunk
+    final_chunk = {
+        "id": f"resp_{response_id}",
+        "object": "response.chunk",
+        "created": 1677652288,
+        "model": "gpt-4.1",
+        "delta": {},
+        "done": True
+    }
+    try:
+        yield f"data: {json.dumps(final_chunk.dict())}\n\n"
+    except:
+        yield f"data: {json.dumps(final_chunk)}\n\n"
+
+
+@app.post("/responses")
+@app.post("/v1/responses")
+async def create_response(request: Request):
+    """OpenAI Responses API endpoint - Create a response"""
+    _time_to_sleep = os.getenv("TIME_TO_SLEEP", None)
+    if _time_to_sleep is not None:
+        print("sleeping for " + _time_to_sleep)
+        await asyncio.sleep(float(_time_to_sleep))
+
+    data = await request.json()
+
+    # Handle error cases
+    if data.get("model") == "429":
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
+
+    if data.get("model") == "random_sleep":
+        sleep_time = random.randint(1, 10)
+        print("sleeping for " + str(sleep_time) + " seconds")
+        await asyncio.sleep(sleep_time)
+
+    if data.get("stream") == True:
+        return StreamingResponse(
+            content=responses_data_generator(),
+            media_type="text/event-stream",
+        )
+    
+    # Non-streaming response
+    response_id = uuid.uuid4().hex
+    model = data.get("model", "gpt-4.1")
+    input_text = data.get("input", "")
+    tools = data.get("tools", [])
+    reasoning = data.get("reasoning", {})
+    background = data.get("background", False)
+    
+    # Generate output text based on input
+    output_text = f"Hello! I received your input: '{input_text}'. This is a mock response from the Responses API."
+    
+    # Handle background mode
+    if background:
+        # In background mode, return a job-like response
+        return {
+            "id": f"resp_{response_id}",
+            "object": "response",
+            "created": int(time.time()),
+            "model": model,
+            "status": "processing",
+            "background": True,
+            "output_text": None,
+            "tools": tools,
+            "reasoning": reasoning
+        }
+    
+    # Regular response
+    response = {
+        "id": f"resp_{response_id}",
+        "object": "response",
+        "created": int(time.time()),
+        "model": model,
+        "output_text": output_text,
+        "tools": tools if tools else [],
+        "reasoning": reasoning if reasoning else {},
+        "usage": {
+            "prompt_tokens": len(input_text.split()) if input_text else 0,
+            "completion_tokens": len(output_text.split()),
+            "total_tokens": len(input_text.split()) + len(output_text.split()) if input_text else len(output_text.split())
+        }
+    }
+    
+    return response
+
+
+@app.get("/v1/responses/{response_id}")
+async def get_response(response_id: str):
+    """OpenAI Responses API endpoint - Get a response by ID"""
+    # Return a mock response with the given ID
+    return {
+        "id": response_id,
+        "object": "response",
+        "created": int(time.time()),
+        "model": "gpt-4.1",
+        "output_text": "This is a mock response retrieved by ID.",
+        "tools": [],
+        "reasoning": {},
+        "status": "completed",
+        "usage": {
+            "prompt_tokens": 5,
+            "completion_tokens": 10,
+            "total_tokens": 15
+        }
+    }
+
+
 
 
 @app.post("/triton/embeddings")
