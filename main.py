@@ -216,6 +216,206 @@ async def embeddings(request: Request):
 
 
 
+# for responses
+def responses_data_generator(input_text=""):
+    """Generator for streaming Responses API chunks"""
+    response_id = uuid.uuid4().hex
+    item_id = f"msg_{uuid.uuid4().hex}"
+    sentence = f"Hello! I received your input: '{input_text}'. This is a mock response from the Responses API."
+    words = sentence.split(" ")
+    current_time = int(time.time())
+    
+    # 1. Send response.created event
+    yield f"data: {json.dumps({
+        'type': 'response.created',
+        'response': {
+            'id': f'resp_{response_id}',
+            'object': 'response',
+            'created_at': current_time,
+            'model': 'gpt-4.1',
+            'status': 'in_progress',
+            'output': []
+        }
+    })}\n\n"
+    
+    # 2. Send output_item.added event
+    yield f"data: {json.dumps({
+        'type': 'response.output_item.added',
+        'output_index': 0,
+        'item': {
+            'type': 'message',
+            'id': item_id,
+            'role': 'assistant',
+            'status': 'in_progress',
+            'content': []
+        }
+    })}\n\n"
+    
+    # 3. Send text deltas
+    for word in words:
+        yield f"data: {json.dumps({
+            'type': 'response.output_text.delta',
+            'item_id': item_id,
+            'output_index': 0,
+            'content_index': 0,
+            'delta': word + ' '
+        })}\n\n"
+    
+    # 4. Send output_text.done event
+    yield f"data: {json.dumps({
+        'type': 'response.output_text.done',
+        'item_id': item_id,
+        'output_index': 0,
+        'content_index': 0,
+        'text': sentence
+    })}\n\n"
+    
+    # 5. Send response.completed event
+    yield f"data: {json.dumps({
+        'type': 'response.completed',
+        'response': {
+            'id': f'resp_{response_id}',
+            'object': 'response',
+            'created_at': current_time,
+            'model': 'gpt-4.1',
+            'status': 'completed',
+            'output': [{
+                'type': 'message',
+                'id': item_id,
+                'role': 'assistant',
+                'status': 'completed',
+                'content': [{'type': 'output_text', 'text': sentence}]
+            }],
+            'usage': {
+                'input_tokens': len(input_text.split()) if input_text else 0,
+                'output_tokens': len(sentence.split()),
+                'total_tokens': (len(input_text.split()) if input_text else 0) + len(sentence.split())
+            }
+        }
+    })}\n\n"
+    
+    # 6. Send [DONE]
+    yield "data: [DONE]\n\n"
+
+
+@app.post("/responses")
+@app.post("/v1/responses")
+async def create_response(request: Request):
+    """OpenAI Responses API endpoint - Create a response"""
+    _time_to_sleep = os.getenv("TIME_TO_SLEEP", None)
+    if _time_to_sleep is not None:
+        print("sleeping for " + _time_to_sleep)
+        await asyncio.sleep(float(_time_to_sleep))
+
+    data = await request.json()
+
+    # Handle error cases
+    if data.get("model") == "429":
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
+
+    if data.get("model") == "random_sleep":
+        sleep_time = random.randint(1, 10)
+        print("sleeping for " + str(sleep_time) + " seconds")
+        await asyncio.sleep(sleep_time)
+
+    # Non-streaming response setup
+    response_id = uuid.uuid4().hex
+    model = data.get("model", "gpt-4.1")
+    input_text = data.get("input", "")
+    
+    if data.get("stream") == True:
+        return StreamingResponse(
+            content=responses_data_generator(input_text=input_text),
+            media_type="text/event-stream",
+        )
+    tools = data.get("tools", [])
+    reasoning = data.get("reasoning", {})
+    background = data.get("background", False)
+    
+    # Generate output text based on input
+    output_text = f"Hello! I received your input: '{input_text}'. This is a mock response from the Responses API."
+    
+    # Handle background mode
+    if background:
+        # In background mode, return a job-like response
+        return {
+            "id": f"resp_{response_id}",
+            "object": "response",
+            "created_at": int(time.time()),
+            "model": model,
+            "status": "processing",
+            "background": True,
+            "output": [],  # Empty output for processing state
+            "tools": tools,
+            "reasoning": reasoning
+        }
+    
+    # Regular response
+    response = {
+        "id": f"resp_{response_id}",
+        "object": "response",
+        "created_at": int(time.time()),
+        "model": model,
+        "output": [
+            {
+                "type": "message",
+                "id": f"msg_{uuid.uuid4().hex}",
+                "status": "completed",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": output_text
+                    }
+                ]
+            }
+        ],
+        "tools": tools if tools else [],
+        "reasoning": reasoning if reasoning else {},
+        "usage": {
+            "input_tokens": len(input_text.split()) if input_text else 0,  
+            "output_tokens": len(output_text.split()),
+            "total_tokens": len(input_text.split()) + len(output_text.split()) if input_text else len(output_text.split())
+        }
+    }
+    
+    return response
+
+
+@app.get("/v1/responses/{response_id}")
+async def get_response(response_id: str):
+    """OpenAI Responses API endpoint - Get a response by ID"""
+    # Return a mock response with the given ID
+    return {
+        "id": response_id,
+        "object": "response",
+        "created_at": int(time.time()),
+        "model": "gpt-4.1",
+        "output": [
+            {
+                "type": "message",
+                "id": f"msg_{uuid.uuid4().hex}",
+                "status": "completed",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": "This is a mock response retrieved by ID."
+                    }
+                ]
+            }
+        ],
+        "tools": [],
+        "reasoning": {},
+        "status": "completed",
+        "usage": {
+            "input_tokens": 5,       
+            "output_tokens": 10,     
+            "total_tokens": 15
+        }
+    }
+
+
 
 @app.post("/triton/embeddings")
 async def embeddings(request: Request):
