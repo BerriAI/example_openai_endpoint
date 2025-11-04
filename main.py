@@ -215,42 +215,87 @@ async def embeddings(request: Request):
     }
 
 
-### OPENAI RESPONSES API ###
 
 # for responses
-def responses_data_generator():
+def responses_data_generator(input_text=""):
     """Generator for streaming Responses API chunks"""
     response_id = uuid.uuid4().hex
-    sentence = "Hello this is a test response from the OpenAI Responses API endpoint."
+    item_id = f"msg_{uuid.uuid4().hex}"
+    sentence = f"Hello! I received your input: '{input_text}'. This is a mock response from the Responses API."
     words = sentence.split(" ")
+    current_time = int(time.time())
+    
+    # 1. Send response.created event
+    yield f"data: {json.dumps({
+        'type': 'response.created',
+        'response': {
+            'id': f'resp_{response_id}',
+            'object': 'response',
+            'created_at': current_time,
+            'model': 'gpt-4.1',
+            'status': 'in_progress',
+            'output': []
+        }
+    })}\n\n"
+    
+    # 2. Send output_item.added event
+    yield f"data: {json.dumps({
+        'type': 'response.output_item.added',
+        'output_index': 0,
+        'item': {
+            'type': 'message',
+            'id': item_id,
+            'role': 'assistant',
+            'status': 'in_progress',
+            'content': []
+        }
+    })}\n\n"
+    
+    # 3. Send text deltas
     for word in words:
-        word = word + " "
-        chunk = {
-            "id": f"resp_{response_id}",
-            "object": "response.chunk",
-            "created": 1677652288,
-            "model": "gpt-4.1",
-            "delta": {
-                "output_text": word
+        yield f"data: {json.dumps({
+            'type': 'response.output_text.delta',
+            'item_id': item_id,
+            'output_index': 0,
+            'content_index': 0,
+            'delta': word + ' '
+        })}\n\n"
+    
+    # 4. Send output_text.done event
+    yield f"data: {json.dumps({
+        'type': 'response.output_text.done',
+        'item_id': item_id,
+        'output_index': 0,
+        'content_index': 0,
+        'text': sentence
+    })}\n\n"
+    
+    # 5. Send response.completed event
+    yield f"data: {json.dumps({
+        'type': 'response.completed',
+        'response': {
+            'id': f'resp_{response_id}',
+            'object': 'response',
+            'created_at': current_time,
+            'model': 'gpt-4.1',
+            'status': 'completed',
+            'output': [{
+                'type': 'message',
+                'id': item_id,
+                'role': 'assistant',
+                'status': 'completed',
+                'content': [{'type': 'output_text', 'text': sentence}]
+            }],
+            'usage': {
+                'input_tokens': len(input_text.split()) if input_text else 0,
+                'output_tokens': len(sentence.split()),
+                'total_tokens': (len(input_text.split()) if input_text else 0) + len(sentence.split())
             }
         }
-        try:
-            yield f"data: {json.dumps(chunk.dict())}\n\n"
-        except:
-            yield f"data: {json.dumps(chunk)}\n\n"
-    # Send final chunk
-    final_chunk = {
-        "id": f"resp_{response_id}",
-        "object": "response.chunk",
-        "created": 1677652288,
-        "model": "gpt-4.1",
-        "delta": {},
-        "done": True
-    }
-    try:
-        yield f"data: {json.dumps(final_chunk.dict())}\n\n"
-    except:
-        yield f"data: {json.dumps(final_chunk)}\n\n"
+    })}\n\n"
+    
+    # 6. Send [DONE]
+    yield "data: [DONE]\n\n"
 
 
 @app.post("/responses")
@@ -273,16 +318,16 @@ async def create_response(request: Request):
         print("sleeping for " + str(sleep_time) + " seconds")
         await asyncio.sleep(sleep_time)
 
-    if data.get("stream") == True:
-        return StreamingResponse(
-            content=responses_data_generator(),
-            media_type="text/event-stream",
-        )
-    
-    # Non-streaming response
+    # Non-streaming response setup
     response_id = uuid.uuid4().hex
     model = data.get("model", "gpt-4.1")
     input_text = data.get("input", "")
+    
+    if data.get("stream") == True:
+        return StreamingResponse(
+            content=responses_data_generator(input_text=input_text),
+            media_type="text/event-stream",
+        )
     tools = data.get("tools", [])
     reasoning = data.get("reasoning", {})
     background = data.get("background", False)
@@ -296,11 +341,11 @@ async def create_response(request: Request):
         return {
             "id": f"resp_{response_id}",
             "object": "response",
-            "created": int(time.time()),
+            "created_at": int(time.time()),
             "model": model,
             "status": "processing",
             "background": True,
-            "output_text": None,
+            "output": [],  # Empty output for processing state
             "tools": tools,
             "reasoning": reasoning
         }
@@ -309,14 +354,27 @@ async def create_response(request: Request):
     response = {
         "id": f"resp_{response_id}",
         "object": "response",
-        "created": int(time.time()),
+        "created_at": int(time.time()),
         "model": model,
-        "output_text": output_text,
+        "output": [
+            {
+                "type": "message",
+                "id": f"msg_{uuid.uuid4().hex}",
+                "status": "completed",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": output_text
+                    }
+                ]
+            }
+        ],
         "tools": tools if tools else [],
         "reasoning": reasoning if reasoning else {},
         "usage": {
-            "prompt_tokens": len(input_text.split()) if input_text else 0,
-            "completion_tokens": len(output_text.split()),
+            "input_tokens": len(input_text.split()) if input_text else 0,  
+            "output_tokens": len(output_text.split()),
             "total_tokens": len(input_text.split()) + len(output_text.split()) if input_text else len(output_text.split())
         }
     }
@@ -331,19 +389,31 @@ async def get_response(response_id: str):
     return {
         "id": response_id,
         "object": "response",
-        "created": int(time.time()),
+        "created_at": int(time.time()),
         "model": "gpt-4.1",
-        "output_text": "This is a mock response retrieved by ID.",
+        "output": [
+            {
+                "type": "message",
+                "id": f"msg_{uuid.uuid4().hex}",
+                "status": "completed",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": "This is a mock response retrieved by ID."
+                    }
+                ]
+            }
+        ],
         "tools": [],
         "reasoning": {},
         "status": "completed",
         "usage": {
-            "prompt_tokens": 5,
-            "completion_tokens": 10,
+            "input_tokens": 5,       
+            "output_tokens": 10,     
             "total_tokens": 15
         }
     }
-
 
 
 
