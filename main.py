@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, status, HTTPException, Depends, Header
+from fastapi import FastAPI, Request, status, HTTPException, Depends, Header, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse, Response
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 from slowapi import Limiter
 from collections import deque
 from datetime import datetime, timedelta
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Callable
 from pydantic import BaseModel
 
 from batch_and_files_api import router as batch_files_router
@@ -892,6 +892,163 @@ def responses_data_generator(input_text=""):
     yield "data: [DONE]\n\n"
 
 
+async def _send_realtime_text_response(
+    websocket: WebSocket,
+    text: str,
+    model: str,
+    next_event_id: Callable[[], str],
+    conversation_id: str,
+) -> None:
+    """Emit realtime events that align with OpenAI's websocket schema."""
+
+    current_time = int(time.time())
+    response_id = f"resp_{uuid.uuid4().hex}"
+    item_id = f"msg_{uuid.uuid4().hex}"
+
+    await websocket.send_json(
+        {
+            "event_id": next_event_id(),
+            "type": "response.created",
+            "response": {
+                "id": response_id,
+                "object": "realtime.response",
+                "created_at": current_time,
+                "status": "in_progress",
+                "model": model,
+                "conversation_id": conversation_id,
+                "output": [],
+            },
+        }
+    )
+
+    await websocket.send_json(
+        {
+            "event_id": next_event_id(),
+            "type": "response.output_item.added",
+            "response_id": response_id,
+            "output_index": 0,
+            "item": {
+                "id": item_id,
+                "object": "realtime.item",
+                "type": "message",
+                "role": "assistant",
+                "status": "in_progress",
+                "content": [],
+            },
+        }
+    )
+
+    await websocket.send_json(
+        {
+            "event_id": next_event_id(),
+            "type": "response.content_part.added",
+            "response_id": response_id,
+            "output_index": 0,
+            "item_id": item_id,
+            "content_index": 0,
+            "part": {
+                "type": "text",
+                "text": "",
+            },
+        }
+    )
+
+    await websocket.send_json(
+        {
+            "event_id": next_event_id(),
+            "type": "response.text.delta",
+            "response_id": response_id,
+            "output_index": 0,
+            "item_id": item_id,
+            "content_index": 0,
+            "delta": text,
+        }
+    )
+
+    await websocket.send_json(
+        {
+            "event_id": next_event_id(),
+            "type": "response.text.done",
+            "response_id": response_id,
+            "output_index": 0,
+            "item_id": item_id,
+            "content_index": 0,
+            "text": text,
+        }
+    )
+
+    await websocket.send_json(
+        {
+            "event_id": next_event_id(),
+            "type": "response.content_part.done",
+            "response_id": response_id,
+            "output_index": 0,
+            "item_id": item_id,
+            "content_index": 0,
+            "part": {
+                "type": "text",
+                "text": text,
+            },
+        }
+    )
+
+    await websocket.send_json(
+        {
+            "event_id": next_event_id(),
+            "type": "response.output_item.done",
+            "response_id": response_id,
+            "output_index": 0,
+            "item": {
+                "id": item_id,
+                "object": "realtime.item",
+                "type": "message",
+                "role": "assistant",
+                "status": "completed",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": text,
+                    }
+                ],
+            },
+        }
+    )
+
+    await websocket.send_json(
+        {
+            "event_id": next_event_id(),
+            "type": "response.done",
+            "response": {
+                "id": response_id,
+                "object": "realtime.response",
+                "status": "completed",
+                "model": model,
+                "conversation_id": conversation_id,
+                "output": [
+                    {
+                        "object": "realtime.item",
+                        "type": "message",
+                        "id": item_id,
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": text,
+                            }
+                        ],
+                    }
+                ],
+                "usage": {
+                    "input_tokens": 0,
+                    "output_tokens": len(text.split()),
+                    "total_tokens": len(text.split()),
+                },
+            },
+        }
+    )
+
+
 @app.post("/responses")
 @app.post("/v1/responses")
 async def create_response(request: Request):
@@ -1008,6 +1165,115 @@ async def get_response(response_id: str):
             "total_tokens": 15
         }
     }
+
+
+@app.websocket("/v1/realtime")
+async def realtime_endpoint(websocket: WebSocket):
+    """Simplified realtime endpoint compatible with LiteLLM proxy tests."""
+
+    model = websocket.query_params.get("model", "gpt-4o-realtime-preview-2024-10-01")
+    session_id = f"sess_{uuid.uuid4().hex}"
+    conversation_id = f"conv_{uuid.uuid4().hex}"
+
+    event_counter = 0
+
+    def next_event_id() -> str:
+        nonlocal event_counter
+        event_counter += 1
+        return f"evt_{session_id}_{event_counter}"
+
+    await websocket.accept()
+
+    await websocket.send_json(
+        {
+            "event_id": next_event_id(),
+            "type": "session.created",
+            "session": {
+                "id": session_id,
+                "model": model,
+                "created_at": int(time.time()),
+                "modalities": ["text"],
+            },
+        }
+    )
+
+    try:
+        while True:
+            incoming = await websocket.receive()
+
+            if incoming.get("type") == "websocket.close":
+                break
+
+            message_text = incoming.get("text")
+            if message_text is None:
+                continue
+
+            try:
+                payload = json.loads(message_text)
+            except json.JSONDecodeError:
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "error": {
+                            "type": "invalid_request_error",
+                            "message": "Payload must be valid JSON",
+                        },
+                    }
+                )
+                continue
+
+            event_type = payload.get("type")
+
+            if event_type == "session.update":
+                await websocket.send_json(
+                    {
+                        "event_id": next_event_id(),
+                        "type": "session.updated",
+                        "session": {
+                            "id": session_id,
+                            "model": model,
+                            "modalities": payload.get("session", {}).get("modalities", ["text"]),
+                        },
+                    }
+                )
+            elif event_type == "response.create":
+                response_payload = payload.get("response", {})
+                instructions = response_payload.get("instructions", "")
+                output_text = (
+                    instructions
+                    if instructions
+                    else "Hello! This is a realtime response from the fake endpoint."
+                )
+                await _send_realtime_text_response(
+                    websocket,
+                    output_text,
+                    model,
+                    next_event_id,
+                    conversation_id,
+                )
+            else:
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "error": {
+                            "type": "unsupported_event",
+                            "message": f"Unsupported realtime event: {event_type}",
+                        },
+                    }
+                )
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        try:
+            await websocket.close(code=1011, reason=str(exc))
+        except RuntimeError:
+            pass
+    finally:
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass
 
 
 if __name__ == "__main__":
