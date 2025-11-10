@@ -1,7 +1,8 @@
 fastapi
-uvicorn
+uvicorn[standard]
 slowapi
 uuid
 python-multipart
 pydantic
 python-dotenv>=0.2.0 # for env 
+websockets 
