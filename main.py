@@ -1199,13 +1199,20 @@ async def realtime_endpoint(websocket: WebSocket):
 
     try:
         while True:
-            incoming = await websocket.receive()
+            try:
+                incoming = await websocket.receive()
+            except RuntimeError as e:
+                # Connection was closed by client
+                if "already completed" in str(e) or "websocket.close" in str(e):
+                    break
+                raise
 
             if incoming.get("type") == "websocket.close":
                 break
 
             message_text = incoming.get("text")
             if message_text is None:
+                # Skip non-text messages (binary, ping/pong, etc.)
                 continue
 
             try:
@@ -1239,10 +1246,11 @@ async def realtime_endpoint(websocket: WebSocket):
             elif event_type == "response.create":
                 response_payload = payload.get("response", {})
                 instructions = response_payload.get("instructions", "")
+                prefix = "[fake-realtime] "
                 output_text = (
-                    instructions
+                    f"{prefix}{instructions}"
                     if instructions
-                    else "Hello! This is a realtime response from the fake endpoint."
+                    else f"{prefix}Hello! This is a realtime response from the fake endpoint."
                 )
                 await _send_realtime_text_response(
                     websocket,
