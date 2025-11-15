@@ -215,6 +215,124 @@ async def embeddings(request: Request):
     }
 
 
+def generate_minimal_audio(format: str = "mp3") -> bytes:
+    """Generate minimal valid audio data for different formats."""
+    if format == "mp3":
+        # Minimal valid MP3 frame (silent audio, ~1 second)
+        # This is a minimal MP3 header + frame
+        mp3_header = bytes([
+            0xFF, 0xFB, 0x90, 0x00,  # MP3 sync word + header
+        ])
+        # Add some minimal frame data (silent audio)
+        frame_data = bytes([0x00] * 100)  # Minimal frame data
+        return mp3_header + frame_data
+    elif format == "opus":
+        # Minimal Opus header (OggS)
+        opus_header = b"OggS\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00"
+        return opus_header + bytes([0x00] * 50)
+    elif format == "aac":
+        # Minimal AAC header
+        aac_header = bytes([0xFF, 0xF1])  # ADTS sync word
+        return aac_header + bytes([0x00] * 50)
+    elif format == "flac":
+        # Minimal FLAC header (fLaC)
+        flac_header = b"fLaC"
+        return flac_header + bytes([0x00] * 50)
+    elif format == "pcm":
+        # Minimal PCM WAV header
+        # WAV header structure
+        wav_header = (
+            b"RIFF" +  # ChunkID
+            (36).to_bytes(4, byteorder="little") +  # ChunkSize
+            b"WAVE" +  # Format
+            b"fmt " +  # Subchunk1ID
+            (16).to_bytes(4, byteorder="little") +  # Subchunk1Size
+            (1).to_bytes(2, byteorder="little") +  # AudioFormat (PCM)
+            (1).to_bytes(2, byteorder="little") +  # NumChannels
+            (16000).to_bytes(4, byteorder="little") +  # SampleRate
+            (32000).to_bytes(4, byteorder="little") +  # ByteRate
+            (2).to_bytes(2, byteorder="little") +  # BlockAlign
+            (16).to_bytes(2, byteorder="little") +  # BitsPerSample
+            b"data" +  # Subchunk2ID
+            (0).to_bytes(4, byteorder="little")  # Subchunk2Size
+        )
+        return wav_header
+    else:
+        # Default to MP3
+        return generate_minimal_audio("mp3")
+
+
+@app.post("/audio/speech")
+@app.post("/v1/audio/speech")
+async def audio_speech(request: Request):
+    """OpenAI Audio Speech endpoint - Text to Speech"""
+    _time_to_sleep = os.getenv("TIME_TO_SLEEP", None)
+    if _time_to_sleep is not None:
+        print("sleeping for " + _time_to_sleep)
+        await asyncio.sleep(float(_time_to_sleep))
+
+    data = await request.json()
+    
+    # Extract parameters
+    model = data.get("model", "tts-1")
+    input_text = data.get("input", "")
+    voice = data.get("voice", "alloy")
+    response_format = data.get("response_format", "mp3")
+    speed = data.get("speed", 1.0)
+    
+    # Validate required parameters
+    if not input_text:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing required parameter: input"
+        )
+    
+    # Validate voice
+    valid_voices = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
+    if voice not in valid_voices:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid voice. Must be one of: {', '.join(valid_voices)}"
+        )
+    
+    # Validate response_format
+    valid_formats = ["mp3", "opus", "aac", "flac", "pcm"]
+    if response_format not in valid_formats:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid response_format. Must be one of: {', '.join(valid_formats)}"
+        )
+    
+    # Validate speed
+    if not (0.25 <= speed <= 4.0):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="speed must be between 0.25 and 4.0"
+        )
+    
+    # Generate minimal audio data
+    audio_data = generate_minimal_audio(response_format)
+    
+    # Set appropriate content type
+    content_types = {
+        "mp3": "audio/mpeg",
+        "opus": "audio/ogg",
+        "aac": "audio/aac",
+        "flac": "audio/flac",
+        "pcm": "audio/wav"
+    }
+    content_type = content_types.get(response_format, "audio/mpeg")
+    
+    # Return binary audio response
+    return Response(
+        content=audio_data,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="speech.{response_format}"'
+        }
+    )
+
+
 
 
 @app.post("/triton/embeddings")
