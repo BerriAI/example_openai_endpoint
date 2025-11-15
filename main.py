@@ -1,5 +1,5 @@
-from fastapi import FastAPI, Request, status, HTTPException, Depends, Header, WebSocket, WebSocketDisconnect
-from fastapi.responses import StreamingResponse, Response
+from fastapi import FastAPI, Request, status, HTTPException, Depends, Header, WebSocket, WebSocketDisconnect, UploadFile, Form
+from fastapi.responses import StreamingResponse, Response, PlainTextResponse, JSONResponse
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
@@ -9,11 +9,13 @@ import asyncio
 import os
 import time
 import random
+import warnings
+import logging
 from dotenv import load_dotenv
 from slowapi import Limiter
 from collections import deque
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Callable
+from typing import List, Dict, Any, Callable, Optional
 from pydantic import BaseModel
 
 from batch_and_files_api import router as batch_files_router
@@ -28,6 +30,12 @@ def get_request_url(request: Request):
 
 limiter = Limiter(key_func=get_request_url)
 load_dotenv()
+
+# Suppress python-multipart's "Skipping data after last boundary" warning
+# This warning appears even in patched versions (0.0.18+) where the DoS vulnerability is fixed.
+# The warning is harmless but clutters logs. We suppress it via logging configuration.
+# Note: Upgraded to python-multipart 0.0.20 which has better handling, but warning may still appear.
+logging.getLogger("multipart").setLevel(logging.ERROR)  # Only show errors, not warnings
 
 app = FastAPI()
 app.state.limiter = limiter
@@ -331,6 +339,114 @@ async def audio_speech(request: Request):
             "Content-Disposition": f'attachment; filename="speech.{response_format}"'
         }
     )
+
+
+@app.post("/audio/transcriptions")
+@app.post("/v1/audio/transcriptions")
+async def audio_transcriptions(
+    file: UploadFile,
+    model: str = Form(...),
+    language: Optional[str] = Form(None),
+    prompt: Optional[str] = Form(None),
+    temperature: Optional[float] = Form(0.0),
+    response_format: Optional[str] = Form("json")
+):
+    """OpenAI Audio Transcriptions endpoint - Speech to Text"""
+    _time_to_sleep = os.getenv("TIME_TO_SLEEP", None)
+    if _time_to_sleep is not None:
+        print("sleeping for " + _time_to_sleep)
+        await asyncio.sleep(float(_time_to_sleep))
+
+    # Validate model
+    if model not in ["whisper-1"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid model. Must be one of: whisper-1"
+        )
+
+    # Validate response_format
+    valid_formats = ["json", "text", "srt", "vtt", "verbose_json"]
+    if response_format not in valid_formats:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid response_format. Must be one of: {', '.join(valid_formats)}"
+        )
+
+    # Validate temperature
+    if not (0.0 <= temperature <= 1.0):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="temperature must be between 0.0 and 1.0"
+        )
+
+    # Read file to get filename (for mock transcription)
+    # Read the entire file content completely to ensure multipart parser consumes all data
+    # This prevents "Skipping data after last boundary" warnings
+    filename = file.filename or "audio_file"
+    file_content = b""
+    try:
+        # Read file completely - reading in chunks ensures we consume the entire stream
+        # This helps the multipart parser properly handle the end of the request
+        while True:
+            chunk = await file.read(8192)  # Read in 8KB chunks
+            if not chunk:
+                break
+            file_content += chunk
+    finally:
+        # Explicitly close the file to signal end of consumption
+        # This helps the multipart parser know we're done reading
+        await file.close()
+    
+    # Generate mock transcription text
+    # In a real implementation, this would process the audio file
+    transcription_text = f"This is a mock transcription of the audio file '{filename}'. The audio has been processed and transcribed to text."
+
+    # Return response based on format
+    if response_format == "json":
+        return JSONResponse(content={"text": transcription_text})
+    elif response_format == "text":
+        return PlainTextResponse(content=transcription_text)
+    elif response_format == "srt":
+        # SRT subtitle format
+        srt_content = f"1\n00:00:00,000 --> 00:00:05,000\n{transcription_text}\n\n"
+        return PlainTextResponse(content=srt_content, media_type="text/plain")
+    elif response_format == "vtt":
+        # WebVTT subtitle format
+        vtt_content = f"WEBVTT\n\n00:00:00.000 --> 00:00:05.000\n{transcription_text}\n"
+        return PlainTextResponse(content=vtt_content, media_type="text/vtt")
+    elif response_format == "verbose_json":
+        # Verbose JSON with segments
+        return JSONResponse(content={
+            "text": transcription_text,
+            "task": "transcribe",
+            "language": language or "en",
+            "duration": 5.0,
+            "words": [
+                {
+                    "word": word,
+                    "start": i * 0.5,
+                    "end": (i + 1) * 0.5
+                }
+                for i, word in enumerate(transcription_text.split()[:10])  # Limit to 10 words for demo
+            ],
+            "segments": [
+                {
+                    "id": 0,
+                    "seek": 0,
+                    "start": 0.0,
+                    "end": 5.0,
+                    "text": transcription_text,
+                    "tokens": [50364] + [i for i in range(10)] + [50257],  # Mock tokens
+                    "temperature": temperature,
+                    "avg_logprob": -0.2,
+                    "compression_ratio": 1.5,
+                    "no_speech_prob": 0.1
+                }
+            ]
+        })
+    else:
+        # Default to JSON
+        return JSONResponse(content={"text": transcription_text})
 
 
 
