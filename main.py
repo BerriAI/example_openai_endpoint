@@ -25,6 +25,31 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 
+# Preload a larger audio blob once at startup to avoid per-request generation cost.
+_PRELOADED_AUDIO: Dict[str, bytes] = {}
+
+
+def _load_preloaded_audio() -> None:
+    """
+    Synthesize larger audio payloads once, fully in-memory.
+
+    We don't rely on any external files; instead we take the existing minimal
+    payload for each format and repeat it until we reach roughly 100 KB.
+    """
+    global _PRELOADED_AUDIO
+
+    # Formats we support for the speech endpoint
+    for fmt in ["mp3", "opus", "aac", "flac", "pcm"]:
+        base = generate_minimal_audio(fmt)
+        # Aim for ~100 KB payload per format
+        repetitions = max(1, 100_000 // max(1, len(base)))
+        _PRELOADED_AUDIO[fmt] = base * repetitions
+
+
+# Initialize preloaded audio at import time
+_load_preloaded_audio()
+
+
 def get_request_url(request: Request):
     return str(request.url)
 
@@ -231,21 +256,24 @@ def generate_minimal_audio(format: str = "mp3") -> bytes:
         mp3_header = bytes([
             0xFF, 0xFB, 0x90, 0x00,  # MP3 sync word + header
         ])
-        # Add some minimal frame data (silent audio)
-        frame_data = bytes([0x00] * 100)  # Minimal frame data
+        # Add some minimal frame data using a non-zero pattern
+        frame_data = bytes([0x55] * 100)  # 0x55 pattern instead of all zeros
         return mp3_header + frame_data
     elif format == "opus":
         # Minimal Opus header (OggS)
         opus_header = b"OggS\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00"
-        return opus_header + bytes([0x00] * 50)
+        # Use a simple non-zero pattern for payload
+        return opus_header + bytes([0x33] * 50)
     elif format == "aac":
         # Minimal AAC header
         aac_header = bytes([0xFF, 0xF1])  # ADTS sync word
-        return aac_header + bytes([0x00] * 50)
+        # Non-zero pattern payload
+        return aac_header + bytes([0x77] * 50)
     elif format == "flac":
         # Minimal FLAC header (fLaC)
         flac_header = b"fLaC"
-        return flac_header + bytes([0x00] * 50)
+        # Non-zero pattern payload
+        return flac_header + bytes([0x99] * 50)
     elif format == "pcm":
         # Minimal PCM WAV header
         # WAV header structure
@@ -318,8 +346,11 @@ async def audio_speech(request: Request):
             detail="speed must be between 0.25 and 4.0"
         )
     
-    # Generate minimal audio data
-    audio_data = generate_minimal_audio(response_format)
+    # Use preloaded audio data to avoid per-request generation cost
+    audio_data = _PRELOADED_AUDIO.get(response_format)
+    if audio_data is None:
+        # Fallback to on-demand minimal generation if something is missing
+        audio_data = generate_minimal_audio(response_format)
     
     # Set appropriate content type
     content_types = {
@@ -331,13 +362,13 @@ async def audio_speech(request: Request):
     }
     content_type = content_types.get(response_format, "audio/mpeg")
     
-    # Return binary audio response
+    # Return binary audio response (Content-Length will reflect the larger preloaded payload)
     return Response(
         content=audio_data,
         media_type=content_type,
         headers={
             "Content-Disposition": f'attachment; filename="speech.{response_format}"'
-        }
+        },
     )
 
 
