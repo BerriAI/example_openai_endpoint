@@ -473,23 +473,11 @@ async def audio_transcriptions(
             detail="temperature must be between 0.0 and 1.0"
         )
 
-    # Read file to get filename (for mock transcription)
-    # Read the entire file content completely to ensure multipart parser consumes all data
-    # This prevents "Skipping data after last boundary" warnings
+    # Get filename (for mock transcription)
+    # For mock endpoint, we don't need to read the file content at all
     filename = file.filename or "audio_file"
-    file_content = b""
-    try:
-        # Read file completely - reading in chunks ensures we consume the entire stream
-        # This helps the multipart parser properly handle the end of the request
-        while True:
-            chunk = await file.read(8192)  # Read in 8KB chunks
-            if not chunk:
-                break
-            file_content += chunk
-    finally:
-        # Explicitly close the file to signal end of consumption
-        # This helps the multipart parser know we're done reading
-        await file.close()
+    # Close the file handle immediately - no need to read bytes for mock transcription
+    await file.close()
     
     # Generate mock transcription text
     # In a real implementation, this would process the audio file
