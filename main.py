@@ -25,25 +25,34 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 
-# Preload a larger audio blob once at startup to avoid per-request generation cost.
-_PRELOADED_AUDIO: Dict[str, bytes] = {}
+# Preloaded audio in three sizes: small, medium, large
+# Structure: _PRELOADED_AUDIO[format][size] = bytes
+_PRELOADED_AUDIO: Dict[str, Dict[str, bytes]] = {}
+
+# Size definitions in bytes
+AUDIO_SIZES = {
+    "small": 20_000,   # ~20 KB - for short inputs (< 100 chars)
+    "medium": 100_000, # ~100 KB - for medium inputs (100-1000 chars)
+    "large": 400_000,  # ~400 KB - for large inputs (> 1000 chars)
+}
 
 
 def _load_preloaded_audio() -> None:
     """
-    Synthesize larger audio payloads once, fully in-memory.
-
-    We don't rely on any external files; instead we take the existing minimal
-    payload for each format and repeat it until we reach roughly 100 KB.
+    Preload three sizes (small, medium, large) of audio for each format.
+    This is done once at startup to avoid per-request generation overhead.
     """
     global _PRELOADED_AUDIO
-
+    
     # Formats we support for the speech endpoint
-    for fmt in ["mp3", "opus", "aac", "flac", "pcm"]:
-        base = generate_minimal_audio(fmt)
-        # Aim for ~100 KB payload per format
-        repetitions = max(1, 100_000 // max(1, len(base)))
-        _PRELOADED_AUDIO[fmt] = base * repetitions
+    formats = ["mp3", "opus", "aac", "flac", "pcm"]
+    
+    for fmt in formats:
+        _PRELOADED_AUDIO[fmt] = {}
+        for size_name, target_size in AUDIO_SIZES.items():
+            # Generate audio of the target size
+            audio_data = generate_audio_by_size(fmt, target_size, speed=1.0)
+            _PRELOADED_AUDIO[fmt][size_name] = audio_data
 
 
 # Initialize preloaded audio at import time
@@ -298,6 +307,41 @@ def generate_minimal_audio(format: str = "mp3") -> bytes:
         return generate_minimal_audio("mp3")
 
 
+def generate_audio_by_size(format: str, target_size: int, speed: float = 1.0) -> bytes:
+    """
+    Generate audio data of approximately the target size.
+    
+    Args:
+        format: Audio format (mp3, opus, aac, flac, pcm)
+        target_size: Target size in bytes
+        speed: Speech speed (affects duration, so faster = smaller for same text)
+    
+    Returns:
+        bytes: Audio data approximately matching target_size
+    """
+    # Adjust target size based on speed (faster speed = shorter duration = smaller file)
+    # Speed affects duration linearly, so we divide by speed
+    adjusted_size = int(target_size / speed)
+    
+    # Get the minimal header/base for this format
+    base = generate_minimal_audio(format)
+    base_size = len(base)
+    
+    # If target is smaller than base, return base (minimum valid audio)
+    if adjusted_size <= base_size:
+        return base
+    
+    # Calculate how much payload we need
+    payload_size = adjusted_size - base_size
+    
+    # Generate payload data with a pattern that looks like audio
+    # Use a repeating pattern that varies to avoid compression artifacts
+    pattern = [0x55, 0xAA, 0x33, 0xCC, 0x66, 0x99, 0x11, 0xEE]
+    payload = bytes([pattern[i % len(pattern)] for i in range(payload_size)])
+    
+    return base + payload
+
+
 @app.post("/audio/speech")
 @app.post("/v1/audio/speech")
 async def audio_speech(request: Request):
@@ -346,11 +390,30 @@ async def audio_speech(request: Request):
             detail="speed must be between 0.25 and 4.0"
         )
     
-    # Use preloaded audio data to avoid per-request generation cost
-    audio_data = _PRELOADED_AUDIO.get(response_format)
+    # Select audio size based on input text length
+    # This allows testing different response sizes without dynamic generation overhead
+    text_length = len(input_text)
+    
+    if text_length < 100:
+        size_key = "small"
+    elif text_length < 1000:
+        size_key = "medium"
+    else:
+        size_key = "large"
+    
+    # Get preloaded audio data for the selected size
+    audio_data = _PRELOADED_AUDIO.get(response_format, {}).get(size_key)
     if audio_data is None:
         # Fallback to on-demand minimal generation if something is missing
         audio_data = generate_minimal_audio(response_format)
+    
+    # Adjust for speed parameter (faster speed = smaller file)
+    # For simplicity, we'll just use the preloaded data as-is
+    # In a real implementation, speed would affect the audio duration
+    # Optional: Log the size for testing/debugging (can be enabled via env var)
+    if os.getenv("LOG_AUDIO_SIZES", "").lower() == "true":
+        print(f"[Audio Speech] Input length: {text_length} chars, Format: {response_format}, "
+              f"Size: {size_key}, Actual size: {len(audio_data)} bytes, Speed: {speed}")
     
     # Set appropriate content type
     content_types = {
@@ -362,7 +425,7 @@ async def audio_speech(request: Request):
     }
     content_type = content_types.get(response_format, "audio/mpeg")
     
-    # Return binary audio response (Content-Length will reflect the larger preloaded payload)
+    # Return binary audio response with preloaded size based on input text length
     return Response(
         content=audio_data,
         media_type=content_type,
