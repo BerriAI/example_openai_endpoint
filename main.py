@@ -37,6 +37,91 @@ AUDIO_SIZES = {
 }
 
 
+def generate_minimal_audio(format: str = "mp3") -> bytes:
+    """Generate minimal valid audio data for different formats."""
+    if format == "mp3":
+        # Minimal valid MP3 frame (silent audio, ~1 second)
+        # This is a minimal MP3 header + frame
+        mp3_header = bytes([
+            0xFF, 0xFB, 0x90, 0x00,  # MP3 sync word + header
+        ])
+        # Add some minimal frame data using a non-zero pattern
+        frame_data = bytes([0x55] * 100)  # 0x55 pattern instead of all zeros
+        return mp3_header + frame_data
+    elif format == "opus":
+        # Minimal Opus header (OggS)
+        opus_header = b"OggS\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00"
+        # Use a simple non-zero pattern for payload
+        return opus_header + bytes([0x33] * 50)
+    elif format == "aac":
+        # Minimal AAC header
+        aac_header = bytes([0xFF, 0xF1])  # ADTS sync word
+        # Non-zero pattern payload
+        return aac_header + bytes([0x77] * 50)
+    elif format == "flac":
+        # Minimal FLAC header (fLaC)
+        flac_header = b"fLaC"
+        # Non-zero pattern payload
+        return flac_header + bytes([0x99] * 50)
+    elif format == "pcm":
+        # Minimal PCM WAV header
+        # WAV header structure
+        wav_header = (
+            b"RIFF" +  # ChunkID
+            (36).to_bytes(4, byteorder="little") +  # ChunkSize
+            b"WAVE" +  # Format
+            b"fmt " +  # Subchunk1ID
+            (16).to_bytes(4, byteorder="little") +  # Subchunk1Size
+            (1).to_bytes(2, byteorder="little") +  # AudioFormat (PCM)
+            (1).to_bytes(2, byteorder="little") +  # NumChannels
+            (16000).to_bytes(4, byteorder="little") +  # SampleRate
+            (32000).to_bytes(4, byteorder="little") +  # ByteRate
+            (2).to_bytes(2, byteorder="little") +  # BlockAlign
+            (16).to_bytes(2, byteorder="little") +  # BitsPerSample
+            b"data" +  # Subchunk2ID
+            (0).to_bytes(4, byteorder="little")  # Subchunk2Size
+        )
+        return wav_header
+    else:
+        # Default to MP3
+        return generate_minimal_audio("mp3")
+
+
+def generate_audio_by_size(format: str, target_size: int, speed: float = 1.0) -> bytes:
+    """
+    Generate audio data of approximately the target size.
+    
+    Args:
+        format: Audio format (mp3, opus, aac, flac, pcm)
+        target_size: Target size in bytes
+        speed: Speech speed (affects duration, so faster = smaller for same text)
+    
+    Returns:
+        bytes: Audio data approximately matching target_size
+    """
+    # Adjust target size based on speed (faster speed = shorter duration = smaller file)
+    # Speed affects duration linearly, so we divide by speed
+    adjusted_size = int(target_size / speed)
+    
+    # Get the minimal header/base for this format
+    base = generate_minimal_audio(format)
+    base_size = len(base)
+    
+    # If target is smaller than base, return base (minimum valid audio)
+    if adjusted_size <= base_size:
+        return base
+    
+    # Calculate how much payload we need
+    payload_size = adjusted_size - base_size
+    
+    # Generate payload data with a pattern that looks like audio
+    # Use a repeating pattern that varies to avoid compression artifacts
+    pattern = [0x55, 0xAA, 0x33, 0xCC, 0x66, 0x99, 0x11, 0xEE]
+    payload = bytes([pattern[i % len(pattern)] for i in range(payload_size)])
+    
+    return base + payload
+
+
 def _load_preloaded_audio() -> None:
     """
     Preload three sizes (small, medium, large) of audio for each format.
@@ -255,91 +340,6 @@ async def embeddings(request: Request):
             "total_tokens": 5
         }
     }
-
-
-def generate_minimal_audio(format: str = "mp3") -> bytes:
-    """Generate minimal valid audio data for different formats."""
-    if format == "mp3":
-        # Minimal valid MP3 frame (silent audio, ~1 second)
-        # This is a minimal MP3 header + frame
-        mp3_header = bytes([
-            0xFF, 0xFB, 0x90, 0x00,  # MP3 sync word + header
-        ])
-        # Add some minimal frame data using a non-zero pattern
-        frame_data = bytes([0x55] * 100)  # 0x55 pattern instead of all zeros
-        return mp3_header + frame_data
-    elif format == "opus":
-        # Minimal Opus header (OggS)
-        opus_header = b"OggS\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00"
-        # Use a simple non-zero pattern for payload
-        return opus_header + bytes([0x33] * 50)
-    elif format == "aac":
-        # Minimal AAC header
-        aac_header = bytes([0xFF, 0xF1])  # ADTS sync word
-        # Non-zero pattern payload
-        return aac_header + bytes([0x77] * 50)
-    elif format == "flac":
-        # Minimal FLAC header (fLaC)
-        flac_header = b"fLaC"
-        # Non-zero pattern payload
-        return flac_header + bytes([0x99] * 50)
-    elif format == "pcm":
-        # Minimal PCM WAV header
-        # WAV header structure
-        wav_header = (
-            b"RIFF" +  # ChunkID
-            (36).to_bytes(4, byteorder="little") +  # ChunkSize
-            b"WAVE" +  # Format
-            b"fmt " +  # Subchunk1ID
-            (16).to_bytes(4, byteorder="little") +  # Subchunk1Size
-            (1).to_bytes(2, byteorder="little") +  # AudioFormat (PCM)
-            (1).to_bytes(2, byteorder="little") +  # NumChannels
-            (16000).to_bytes(4, byteorder="little") +  # SampleRate
-            (32000).to_bytes(4, byteorder="little") +  # ByteRate
-            (2).to_bytes(2, byteorder="little") +  # BlockAlign
-            (16).to_bytes(2, byteorder="little") +  # BitsPerSample
-            b"data" +  # Subchunk2ID
-            (0).to_bytes(4, byteorder="little")  # Subchunk2Size
-        )
-        return wav_header
-    else:
-        # Default to MP3
-        return generate_minimal_audio("mp3")
-
-
-def generate_audio_by_size(format: str, target_size: int, speed: float = 1.0) -> bytes:
-    """
-    Generate audio data of approximately the target size.
-    
-    Args:
-        format: Audio format (mp3, opus, aac, flac, pcm)
-        target_size: Target size in bytes
-        speed: Speech speed (affects duration, so faster = smaller for same text)
-    
-    Returns:
-        bytes: Audio data approximately matching target_size
-    """
-    # Adjust target size based on speed (faster speed = shorter duration = smaller file)
-    # Speed affects duration linearly, so we divide by speed
-    adjusted_size = int(target_size / speed)
-    
-    # Get the minimal header/base for this format
-    base = generate_minimal_audio(format)
-    base_size = len(base)
-    
-    # If target is smaller than base, return base (minimum valid audio)
-    if adjusted_size <= base_size:
-        return base
-    
-    # Calculate how much payload we need
-    payload_size = adjusted_size - base_size
-    
-    # Generate payload data with a pattern that looks like audio
-    # Use a repeating pattern that varies to avoid compression artifacts
-    pattern = [0x55, 0xAA, 0x33, 0xCC, 0x66, 0x99, 0x11, 0xEE]
-    payload = bytes([pattern[i % len(pattern)] for i in range(payload_size)])
-    
-    return base + payload
 
 
 @app.post("/audio/speech")
