@@ -497,32 +497,17 @@ async def audio_transcriptions(
         vtt_content = f"WEBVTT\n\n00:00:00.000 --> 00:00:05.000\n{transcription_text}\n"
         return PlainTextResponse(content=vtt_content, media_type="text/vtt")
     elif response_format == "verbose_json":
-        # Verbose JSON with segments
+        # Minimal verbose JSON - lightweight format
         return JSONResponse(content={
             "text": transcription_text,
-            "task": "transcribe",
             "language": language or "en",
             "duration": 5.0,
-            "words": [
-                {
-                    "word": word,
-                    "start": i * 0.5,
-                    "end": (i + 1) * 0.5
-                }
-                for i, word in enumerate(transcription_text.split()[:10])  # Limit to 10 words for demo
-            ],
             "segments": [
                 {
                     "id": 0,
-                    "seek": 0,
                     "start": 0.0,
                     "end": 5.0,
-                    "text": transcription_text,
-                    "tokens": [50364] + [i for i in range(10)] + [50257],  # Mock tokens
-                    "temperature": temperature,
-                    "avg_logprob": -0.2,
-                    "compression_ratio": 1.5,
-                    "no_speech_prob": 0.1
+                    "text": transcription_text
                 }
             ]
         })
