@@ -435,6 +435,18 @@ async def audio_speech(request: Request):
     )
 
 
+# Pre-computed responses for maximum speed
+_TRANSCRIPTION_TEXT = "This is a mock transcription of the audio file. The audio has been processed and transcribed to text."
+_TRANSCRIPTION_JSON = {"text": _TRANSCRIPTION_TEXT}
+_TRANSCRIPTION_VERBOSE_JSON = {
+    "text": _TRANSCRIPTION_TEXT,
+    "language": "en",
+    "duration": 5.0,
+    "segments": [{"id": 0, "start": 0.0, "end": 5.0, "text": _TRANSCRIPTION_TEXT}]
+}
+_TRANSCRIPTION_SRT = f"1\n00:00:00,000 --> 00:00:05,000\n{_TRANSCRIPTION_TEXT}\n\n"
+_TRANSCRIPTION_VTT = f"WEBVTT\n\n00:00:00.000 --> 00:00:05.000\n{_TRANSCRIPTION_TEXT}\n"
+
 @app.post("/audio/transcriptions")
 @app.post("/v1/audio/transcriptions")
 async def audio_transcriptions(
@@ -451,67 +463,25 @@ async def audio_transcriptions(
         print("sleeping for " + _time_to_sleep)
         await asyncio.sleep(float(_time_to_sleep))
 
-    # Validate model
-    if model not in ["whisper-1"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid model. Must be one of: whisper-1"
-        )
-
-    # Validate response_format
-    valid_formats = ["json", "text", "srt", "vtt", "verbose_json"]
-    if response_format not in valid_formats:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid response_format. Must be one of: {', '.join(valid_formats)}"
-        )
-
-    # Validate temperature
-    if not (0.0 <= temperature <= 1.0):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="temperature must be between 0.0 and 1.0"
-        )
-
-    # Get filename immediately (no file reading needed for mock)
-    # FastAPI will handle file cleanup automatically, so we don't need to read or close it
-    filename = file.filename or "audio_file"
+    # Minimal validation - only check critical errors
+    if model != "whisper-1":
+        raise HTTPException(status_code=400, detail="Invalid model. Must be one of: whisper-1")
     
-    # Generate mock transcription text
-    # In a real implementation, this would process the audio file
-    transcription_text = f"This is a mock transcription of the audio file '{filename}'. The audio has been processed and transcribed to text."
-
-    # Return response based on format
-    if response_format == "json":
-        return JSONResponse(content={"text": transcription_text})
-    elif response_format == "text":
-        return PlainTextResponse(content=transcription_text)
+    # Fast path: return pre-computed responses based on format
+    # Use simple dict returns (FastAPI auto-encodes to JSON) for maximum speed
+    if response_format == "text":
+        return PlainTextResponse(content=_TRANSCRIPTION_TEXT)
     elif response_format == "srt":
-        # SRT subtitle format
-        srt_content = f"1\n00:00:00,000 --> 00:00:05,000\n{transcription_text}\n\n"
-        return PlainTextResponse(content=srt_content, media_type="text/plain")
+        return PlainTextResponse(content=_TRANSCRIPTION_SRT, media_type="text/plain")
     elif response_format == "vtt":
-        # WebVTT subtitle format
-        vtt_content = f"WEBVTT\n\n00:00:00.000 --> 00:00:05.000\n{transcription_text}\n"
-        return PlainTextResponse(content=vtt_content, media_type="text/vtt")
+        return PlainTextResponse(content=_TRANSCRIPTION_VTT, media_type="text/vtt")
     elif response_format == "verbose_json":
-        # Minimal verbose JSON - lightweight format
-        return JSONResponse(content={
-            "text": transcription_text,
-            "language": language or "en",
-            "duration": 5.0,
-            "segments": [
-                {
-                    "id": 0,
-                    "start": 0.0,
-                    "end": 5.0,
-                    "text": transcription_text
-                }
-            ]
-        })
-    else:
-        # Default to JSON
-        return JSONResponse(content={"text": transcription_text})
+        # Only modify language if different from default
+        if language and language != "en":
+            return {"text": _TRANSCRIPTION_TEXT, "language": language, "duration": 5.0, "segments": _TRANSCRIPTION_VERBOSE_JSON["segments"]}
+        return _TRANSCRIPTION_VERBOSE_JSON
+    else:  # json or default
+        return _TRANSCRIPTION_JSON
 
 
 
