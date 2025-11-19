@@ -473,11 +473,9 @@ async def audio_transcriptions(
             detail="temperature must be between 0.0 and 1.0"
         )
 
-    # Get filename (for mock transcription)
-    # For mock endpoint, we don't need to read the file content at all
+    # Get filename immediately (no file reading needed for mock)
+    # FastAPI will handle file cleanup automatically, so we don't need to read or close it
     filename = file.filename or "audio_file"
-    # Close the file handle immediately - no need to read bytes for mock transcription
-    await file.close()
     
     # Generate mock transcription text
     # In a real implementation, this would process the audio file
