@@ -10,7 +10,7 @@ import uuid
 import asyncio
 import os
 import time
-import tiktoken
+# import tiktoken
 # from langchain.text_splitter import TokenTextSplitter
 
 app = FastAPI()
@@ -70,7 +70,7 @@ def num_tokens_from_messages(messages, model="gpt-3.5-turbo-0125"):
         encoding = tiktoken.encoding_for_model(model)
     except KeyError:
         encoding = tiktoken.get_encoding("cl100k_base")
-    if model == "gpt-3.5-turbo-0125":  # note: future models may deviate from this
+    if model == "gpt-6":  # note: future models may deviate from this
         num_tokens = 0
         for message in messages:
             num_tokens += 4  # every message follows <im_start>{role/name}\n{content}<im_end>\n
@@ -111,8 +111,8 @@ async def data_generator(sentence="花香蕉的钱，只能请到猴子. ", time
 async def completion(request: Request):
 
     data = await request.json()
-    print(data)
-    await asyncio.sleep(float(data.get('fk_time_to_sleep', 0.1)))
+    # print(data)
+    # await asyncio.sleep(float(data.get('fk_time_to_sleep', 0.1)))
     
     fk_error = data.get('fk_error')
     if fk_error == 500:
@@ -121,9 +121,11 @@ async def completion(request: Request):
         raise RateLimitError("A 429 status code was received; we should back off a bit.")
 
     fk_reply = data.get('fk_reply', data['messages'][0]['content']) or 'You is my friend!'
-    prompt_tokens = num_tokens_from_messages(data['messages'])
-    encoding = tiktoken.get_encoding("cl100k_base")
-    completion_tokens = len(encoding.encode(fk_reply))
+    # prompt_tokens = num_tokens_from_messages(data['messages'])
+    # encoding = tiktoken.get_encoding("cl100k_base")
+    prompt_tokens = 100
+    completion_tokens = 50
+    # completion_tokens = len(encoding.encode(fk_reply))
     total_tokens = prompt_tokens + completion_tokens
 
     if data.get("stream") == True:
