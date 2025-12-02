@@ -144,6 +144,32 @@ def _load_preloaded_audio() -> None:
 _load_preloaded_audio()
 
 
+def get_histogram_sleep_time() -> float:
+    """
+    Returns a sleep time based on a histogram distribution:
+    - Most requests (~70%): ~10 seconds (8-12s range)
+    - Some requests (~25%): ~60 seconds (55-65s range)
+    - Very few (~5%): 60+ seconds (60-300s range)
+    
+    This simulates realistic degraded provider behavior where most requests
+    are slow but not terrible, some are very slow, and a few are extremely slow.
+    """
+    rand = random.random()
+    
+    if rand < 0.70:  # 70% of requests: ~10 seconds
+        # Normal distribution around 10 seconds, std dev of 2
+        sleep_time = max(1.0, random.gauss(10, 2))
+        return sleep_time
+    elif rand < 0.95:  # 25% of requests: ~60 seconds
+        # Normal distribution around 60 seconds, std dev of 5
+        sleep_time = max(30.0, random.gauss(60, 5))
+        return sleep_time
+    else:  # 5% of requests: 60+ seconds (up to 5 minutes)
+        # Uniform distribution between 60 and 300 seconds
+        sleep_time = random.uniform(60, 300)
+        return sleep_time
+
+
 def get_request_url(request: Request):
     return str(request.url)
 
@@ -209,6 +235,15 @@ async def completion(request: Request):
         # sleep for a random time between 1 and 10 seconds
         sleep_time = random.randint(1, 10)
         print("sleeping for " + str(sleep_time) + " seconds")
+        await asyncio.sleep(sleep_time)
+    
+    # Degraded provider simulation: sleep with histogram distribution to simulate hanging requests
+    # This causes event loop blocking, file descriptor accumulation, and tests LiteLLM's
+    # behavior under degraded provider conditions
+    if data.get("model") in ["degraded", "slow_provider", "blocked"]:
+        # Histogram distribution: most ~10s, some ~60s, few 60s+
+        sleep_time = get_histogram_sleep_time()
+        print(f"[DEGRADED MODE] Sleeping for {sleep_time:.1f} seconds ({sleep_time/60:.1f} minutes) - histogram distribution")
         await asyncio.sleep(sleep_time)
     if data.get("stream") == True:
         return StreamingResponse(
@@ -1336,6 +1371,12 @@ async def create_response(request: Request):
     if data.get("model") == "random_sleep":
         sleep_time = random.randint(1, 10)
         print("sleeping for " + str(sleep_time) + " seconds")
+        await asyncio.sleep(sleep_time)
+    
+    # Degraded provider simulation for responses endpoint
+    if data.get("model") in ["degraded", "slow_provider", "blocked"]:
+        sleep_time = get_histogram_sleep_time()
+        print(f"[DEGRADED MODE] Sleeping for {sleep_time:.1f} seconds ({sleep_time/60:.1f} minutes) - histogram distribution")
         await asyncio.sleep(sleep_time)
 
     # Non-streaming response setup
