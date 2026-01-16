@@ -1211,6 +1211,14 @@ async def has_request_id(request_id: str):
 # for responses
 def responses_data_generator(input_text=""):
     """Generator for streaming Responses API chunks"""
+    # Ensure input_text is always a string
+    if isinstance(input_text, list):
+        input_text = " ".join(str(msg) for msg in input_text)
+    elif isinstance(input_text, dict):
+        input_text = str(input_text)
+    else:
+        input_text = str(input_text) if input_text else ""
+    
     response_id = uuid.uuid4().hex
     item_id = f"msg_{uuid.uuid4().hex}"
     sentence = f"Hello! I received your input: '{input_text}'. This is a mock response from the Responses API."
@@ -1481,7 +1489,18 @@ async def create_response(request: Request):
     # Non-streaming response setup
     response_id = uuid.uuid4().hex
     model = data.get("model", "gpt-4.1")
-    input_text = data.get("input", "")
+    input_data = data.get("input", "")
+    
+    # Handle input: can be string, list, or dict (Azure format)
+    if isinstance(input_data, list):
+        # Convert list of messages to string representation for token counting
+        input_text = " ".join(str(msg) for msg in input_data)
+    elif isinstance(input_data, dict):
+        # Handle dict format (e.g., {"messages": [...]})
+        input_text = str(input_data)
+    else:
+        # Assume it's a string
+        input_text = str(input_data) if input_data else ""
     
     if data.get("stream") == True:
         return StreamingResponse(
@@ -1492,8 +1511,9 @@ async def create_response(request: Request):
     reasoning = data.get("reasoning", {})
     background = data.get("background", False)
     
-    # Generate output text based on input
-    output_text = f"Hello! I received your input: '{input_text}'. This is a mock response from the Responses API."
+    # Generate output text based on input (use original input_data for display)
+    input_display = input_data if isinstance(input_data, str) else str(input_data)
+    output_text = f"Hello! I received your input: '{input_display}'. This is a mock response from the Responses API."
     
     # Handle background mode
     if background:
@@ -1720,13 +1740,31 @@ async def realtime_endpoint(websocket: WebSocket):
 
 # Catch-all route for Vertex AI endpoints with colons (e.g., :generateContent, :predict)
 # This must come at the END after all other routes
+# Only matches paths that look like Vertex AI endpoints (contains /v1/projects/ or ends with colon methods)
 @app.post("/{path:path}")
 async def catch_all_vertex_with_colons(request: Request, path: str):
     """Catch-all for Vertex AI endpoints with colons (e.g., :generateContent, :predict)"""
     # Extract the actual path from the request URL
     request_path = request.url.path
     
-    # Check if this is a Vertex AI endpoint with a colon
+    # Only handle paths that look like Vertex AI endpoints
+    # Check for Vertex AI patterns: /v1/projects/ or paths ending with colon methods
+    is_vertex_path = (
+        "/v1/projects/" in request_path or 
+        ":generateContent" in request_path or 
+        ":predict" in request_path or
+        request_path.endswith("generateContent") or
+        request_path.endswith("predict")
+    )
+    
+    if not is_vertex_path:
+        # Not a Vertex AI path, return 404 (let FastAPI handle it normally)
+        raise HTTPException(status_code=404, detail="Not Found")
+    
+    # Log Vertex AI paths we receive for debugging
+    print(f"[DEBUG] catch_all_vertex received Vertex AI path: {request_path}")
+    
+    # Check if this is a generateContent endpoint
     if ":generateContent" in request_path or request_path.endswith("generateContent"):
         authorization = request.headers.get("authorization")
         try:
@@ -1737,6 +1775,7 @@ async def catch_all_vertex_with_colons(request: Request, path: str):
             print(f"[ERROR] Traceback:\n{traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=str(e))
     
+    # Check if this is a predict endpoint
     elif ":predict" in request_path or request_path.endswith("predict"):
         authorization = request.headers.get("authorization")
         try:
@@ -1747,7 +1786,7 @@ async def catch_all_vertex_with_colons(request: Request, path: str):
             print(f"[ERROR] Traceback:\n{traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=str(e))
     
-    # If it's not a Vertex endpoint, return 404
+    # If it's a Vertex path but doesn't match our handlers, still return 404
     raise HTTPException(status_code=404, detail="Not Found")
 
 
