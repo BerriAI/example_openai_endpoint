@@ -867,6 +867,105 @@ async def predict(request: Request, authorization: str = Header(None)):
     return response
 
 
+# Add catch-all routes for Vertex AI endpoints
+# These must come AFTER the specific routes but handle any project/location/model combination
+
+@app.post("/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:generateContent")
+async def vertex_generate_content_catchall(request: Request, project: str, location: str, model: str, authorization: str = Header(None)):
+    """Catch-all endpoint for Vertex AI generateContent - accepts any project/location/model"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid or missing Authorization header")
+
+    data = await request.json()
+    
+    # Return the same response format regardless of model name
+    return {
+        "candidates": [
+            {
+                "content": {
+                    "role": "model",
+                    "parts": [
+                        {
+                            "text": "Hello! This is a mock response from Vertex AI. Model: " + model
+                        }
+                    ]
+                },
+                "finishReason": "STOP",
+                "safetyRatings": [
+                    {
+                        "category": "HARM_CATEGORY_HATE_SPEECH",
+                        "probability": "NEGLIGIBLE",
+                        "probabilityScore": 0.037353516,
+                        "severity": "HARM_SEVERITY_NEGLIGIBLE",
+                        "severityScore": 0.03515625
+                    },
+                    {
+                        "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                        "probability": "NEGLIGIBLE",
+                        "probabilityScore": 0.017944336,
+                        "severity": "HARM_SEVERITY_NEGLIGIBLE",
+                        "severityScore": 0.020019531
+                    },
+                    {
+                        "category": "HARM_CATEGORY_HARASSMENT",
+                        "probability": "NEGLIGIBLE",
+                        "probabilityScore": 0.06738281,
+                        "severity": "HARM_SEVERITY_NEGLIGIBLE",
+                        "severityScore": 0.03173828
+                    },
+                    {
+                        "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                        "probability": "NEGLIGIBLE",
+                        "probabilityScore": 0.11279297,
+                        "severity": "HARM_SEVERITY_NEGLIGIBLE",
+                        "severityScore": 0.057373047
+                    }
+                ],
+                "avgLogprobs": -0.30250951355578853
+            }
+        ],
+        "usageMetadata": {
+            "promptTokenCount": 5,
+            "candidatesTokenCount": 51,
+            "totalTokenCount": 56
+        }
+    }
+
+
+@app.post("/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:predict")
+async def vertex_predict_catchall(request: Request, project: str, location: str, model: str, authorization: str = Header(None)):
+    """Catch-all endpoint for Vertex AI predict (embeddings) - accepts any project/location/model"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid or missing Authorization header")
+
+    data = await request.json()
+    
+    instances = data.get('instances', [])
+    num_instances = len(instances)
+    
+    predictions = []
+    for _ in range(num_instances):
+        embedding = [random.uniform(-0.15, 0.15) for _ in range(768)]
+        predictions.append({
+            "embeddings": {
+                "values": embedding,
+                "statistics": {
+                    "truncated": False,
+                    "token_count": random.randint(4, 10)
+                }
+            }
+        })
+
+    billable_character_count = sum(len(instance.get('content', '')) for instance in instances)
+
+    return {
+        "predictions": predictions,
+        "metadata": {
+            "billableCharacterCount": billable_character_count
+        }
+    }
+
+
 @app.post("/runs")
 @app.post("/runs/batch")
 async def runs(request: Request):
