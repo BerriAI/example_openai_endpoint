@@ -966,6 +966,20 @@ async def vertex_predict_catchall(request: Request, project: str, location: str,
     }
 
 
+# Add these routes to handle the :generateContent and :predict format
+# FastAPI might interpret :generateContent as a path parameter, so we need explicit routes
+
+@app.post("/:generateContent")
+async def vertex_generate_content_with_colon(request: Request, authorization: str = Header(None)):
+    """Handle Vertex AI generateContent with colon prefix (from api_base:generateContent format)"""
+    return await generate_content(request, authorization)
+
+@app.post("/:predict")  
+async def vertex_predict_with_colon(request: Request, authorization: str = Header(None)):
+    """Handle Vertex AI predict with colon prefix (from api_base:predict format)"""
+    return await predict(request, authorization)
+
+
 @app.post("/runs")
 @app.post("/runs/batch")
 async def runs(request: Request):
