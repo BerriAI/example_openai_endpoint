@@ -966,20 +966,6 @@ async def vertex_predict_catchall(request: Request, project: str, location: str,
     }
 
 
-# Add these routes to handle the :generateContent and :predict format
-# FastAPI might interpret :generateContent as a path parameter, so we need explicit routes
-
-@app.post("/:generateContent")
-async def vertex_generate_content_with_colon(request: Request, authorization: str = Header(None)):
-    """Handle Vertex AI generateContent with colon prefix (from api_base:generateContent format)"""
-    return await generate_content(request, authorization)
-
-@app.post("/:predict")  
-async def vertex_predict_with_colon(request: Request, authorization: str = Header(None)):
-    """Handle Vertex AI predict with colon prefix (from api_base:predict format)"""
-    return await predict(request, authorization)
-
-
 @app.post("/runs")
 @app.post("/runs/batch")
 async def runs(request: Request):
@@ -1560,8 +1546,25 @@ async def create_response(request: Request):
 @app.post("/openai/v1/responses")
 async def azure_responses_api(request: Request):
     """Azure Responses API endpoint - delegates to the same handler as /responses"""
-    # Reuse the exact same logic as your existing /responses endpoint
-    return await create_response(request)
+    try:
+        # Reuse the exact same logic as your existing /responses endpoint
+        return await create_response(request)
+    except Exception as e:
+        import traceback
+        error_msg = f"Error in azure_responses_api: {str(e)}"
+        print(f"[ERROR] {error_msg}")
+        print(f"[ERROR] Traceback:\n{traceback.format_exc()}")
+        print(f"[ERROR] Request URL: {request.url}")
+        print(f"[ERROR] Request method: {request.method}")
+        try:
+            body = await request.body()
+            print(f"[ERROR] Request body: {body.decode('utf-8', errors='ignore')[:500]}")
+        except:
+            pass
+        raise HTTPException(
+            status_code=500,
+            detail=error_msg
+        )
 
 
 @app.get("/v1/responses/{response_id}")
@@ -1713,6 +1716,39 @@ async def realtime_endpoint(websocket: WebSocket):
             await websocket.close()
         except RuntimeError:
             pass
+
+
+# Catch-all route for Vertex AI endpoints with colons (e.g., :generateContent, :predict)
+# This must come at the END after all other routes
+@app.post("/{path:path}")
+async def catch_all_vertex_with_colons(request: Request, path: str):
+    """Catch-all for Vertex AI endpoints with colons (e.g., :generateContent, :predict)"""
+    # Extract the actual path from the request URL
+    request_path = request.url.path
+    
+    # Check if this is a Vertex AI endpoint with a colon
+    if ":generateContent" in request_path or request_path.endswith("generateContent"):
+        authorization = request.headers.get("authorization")
+        try:
+            return await generate_content(request, authorization)
+        except Exception as e:
+            import traceback
+            print(f"[ERROR] catch_all_vertex generateContent failed: {str(e)}")
+            print(f"[ERROR] Traceback:\n{traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    elif ":predict" in request_path or request_path.endswith("predict"):
+        authorization = request.headers.get("authorization")
+        try:
+            return await predict(request, authorization)
+        except Exception as e:
+            import traceback
+            print(f"[ERROR] catch_all_vertex predict failed: {str(e)}")
+            print(f"[ERROR] Traceback:\n{traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    # If it's not a Vertex endpoint, return 404
+    raise HTTPException(status_code=404, detail="Not Found")
 
 
 if __name__ == "__main__":
