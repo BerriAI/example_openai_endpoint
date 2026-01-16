@@ -1542,6 +1542,14 @@ async def create_response(request: Request):
     return response
 
 
+@app.post("/openai/responses")
+@app.post("/openai/v1/responses")
+async def azure_responses_api(request: Request):
+    """Azure Responses API endpoint - delegates to the same handler as /responses"""
+    # Reuse the exact same logic as your existing /responses endpoint
+    return await create_response(request)
+
+
 @app.get("/v1/responses/{response_id}")
 async def get_response(response_id: str):
     """OpenAI Responses API endpoint - Get a response by ID"""
