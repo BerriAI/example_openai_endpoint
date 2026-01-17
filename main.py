@@ -173,6 +173,73 @@ def get_histogram_sleep_time() -> float:
 def get_request_url(request: Request):
     return str(request.url)
 
+
+def format_detailed_error(
+    error: Exception,
+    request: Request,
+    context: str = "",
+    include_body: bool = False
+) -> dict:
+    """Format a detailed error response with request context"""
+    error_detail = {
+        "error": {
+            "message": str(error),
+            "type": type(error).__name__,
+            "context": context,
+            "request": {
+                "path": request.url.path,
+                "method": request.method,
+                "query": str(request.url.query) if request.url.query else None,
+            }
+        }
+    }
+    
+    # Add sanitized headers (mask sensitive values)
+    headers_dict = dict(request.headers)
+    sanitized_headers = {}
+    for key, value in headers_dict.items():
+        if key.lower() in ["authorization", "api-key", "x-api-key", "cookie"]:
+            # Show only first 20 chars of sensitive headers
+            sanitized_headers[key] = f"{value[:20]}..." if len(value) > 20 else value
+        else:
+            sanitized_headers[key] = value
+    error_detail["error"]["request"]["headers"] = sanitized_headers
+    
+    # Optionally include request body preview
+    if include_body:
+        try:
+            # Try to get body without consuming it (if already read)
+            # This might not work if body was already consumed, but worth trying
+            pass  # Body reading is async, so we'll do it in the caller if needed
+        except:
+            pass
+    
+    return error_detail
+
+
+async def get_error_detail_with_body(
+    error: Exception,
+    request: Request,
+    context: str = ""
+) -> dict:
+    """Get detailed error response including request body if possible"""
+    error_detail = format_detailed_error(error, request, context, include_body=False)
+    
+    # Try to get request body
+    try:
+        body = await request.body()
+        if body:
+            body_str = body.decode('utf-8', errors='ignore')
+            # Limit body size in error response (first 500 chars)
+            error_detail["error"]["request"]["body_preview"] = body_str[:500]
+            if len(body_str) > 500:
+                error_detail["error"]["request"]["body_preview"] += "... (truncated)"
+    except Exception:
+        error_detail["error"]["request"]["body_preview"] = "Unable to read request body"
+    
+    return error_detail
+
+
 limiter = Limiter(key_func=get_request_url)
 load_dotenv()
 
@@ -1581,9 +1648,12 @@ async def azure_responses_api(request: Request):
             print(f"[ERROR] Request body: {body.decode('utf-8', errors='ignore')[:500]}")
         except:
             pass
+        
+        # Return detailed error response
+        error_detail = await get_error_detail_with_body(e, request, "azure_responses_api")
         raise HTTPException(
             status_code=500,
-            detail=error_msg
+            detail=error_detail
         )
 
 
@@ -1768,9 +1838,15 @@ async def catch_all_vertex_with_colons(request: Request, path: str):
     )
     
     if not is_vertex_path:
-        # Not a Vertex AI path, return 404
+        # Not a Vertex AI path, return 404 with details
         print(f"[DEBUG] Not a Vertex AI path, returning 404")
-        raise HTTPException(status_code=404, detail="Not Found")
+        error_detail = format_detailed_error(
+            Exception("Path does not match Vertex AI endpoint patterns"),
+            request,
+            "catch_all_vertex_path_check"
+        )
+        error_detail["error"]["message"] = f"No handler found for path: {request_path}"
+        raise HTTPException(status_code=404, detail=error_detail)
     
     # Log Vertex AI paths we receive for debugging
     print(f"[DEBUG] Processing as Vertex AI path: {request_path}")
@@ -1794,7 +1870,9 @@ async def catch_all_vertex_with_colons(request: Request, path: str):
             import traceback
             print(f"[ERROR] catch_all_vertex generateContent failed: {str(e)}")
             print(f"[ERROR] Traceback:\n{traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=str(e))
+            # Return detailed error response
+            error_detail = await get_error_detail_with_body(e, request, "vertex_generate_content")
+            raise HTTPException(status_code=500, detail=error_detail)
     
     # Check if this is a predict endpoint (multiple patterns)
     is_predict = (
@@ -1815,11 +1893,19 @@ async def catch_all_vertex_with_colons(request: Request, path: str):
             import traceback
             print(f"[ERROR] catch_all_vertex predict failed: {str(e)}")
             print(f"[ERROR] Traceback:\n{traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=str(e))
+            # Return detailed error response
+            error_detail = await get_error_detail_with_body(e, request, "vertex_predict")
+            raise HTTPException(status_code=500, detail=error_detail)
     
-    # If it's a Vertex path but doesn't match our handlers, log and return 404
+    # If it's a Vertex path but doesn't match our handlers, log and return 404 with details
     print(f"[WARNING] Vertex AI path recognized but no handler matched: {request_path}")
-    raise HTTPException(status_code=404, detail="Not Found")
+    error_detail = format_detailed_error(
+        Exception(f"Vertex AI path recognized but no handler available"),
+        request,
+        "catch_all_vertex_no_handler"
+    )
+    error_detail["error"]["message"] = f"Vertex AI path '{request_path}' recognized but no handler matched. Supported handlers: generateContent, predict"
+    raise HTTPException(status_code=404, detail=error_detail)
 
 
 if __name__ == "__main__":
