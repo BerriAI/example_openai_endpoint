@@ -753,15 +753,9 @@ async def generate_content(request: Request, authorization: str = Header(None)):
 
     data = await request.json()
     
-    # SIMPLIFIED LOGIC: Use path structure instead of model detection
-    # - Simple paths (/:generateContent, /generateContent) → Anthropic format (used by LiteLLM for Vertex AI Anthropic)
-    # - Paths with /models/gemini-... → Gemini format
-    # - Paths with /models/claude-... or /v1/projects/.../models/... → Anthropic format (has content field)
-    # - Everything else defaults to Anthropic format to ensure 'content' field is present
-    
     request_path = request.url.path
     
-    # Extract model name from path for response
+    # Extract model name from path
     model = None
     if "/models/" in request_path:
         try:
@@ -771,12 +765,21 @@ async def generate_content(request: Request, authorization: str = Header(None)):
         except:
             pass
     
-    # Check if this is a Gemini model: path contains /models/gemini OR extracted model name contains "gemini"
-    is_gemini_path = "/models/gemini" in request_path.lower() or (model and "gemini" in model.lower())
+    # Also check request body for model information (fallback)
+    if not model and isinstance(data, dict):
+        model = data.get("model") or data.get("model_name") or data.get("modelId")
+    
+    # Determine if this is a Gemini model: check path OR model name
+    # Gemini models have "gemini" in their name (e.g., gemini-2.0-flash-lite, gemini-2.5-pro)
+    is_gemini = False
+    if model:
+        is_gemini = "gemini" in model.lower()
+    elif "/models/gemini" in request_path.lower():
+        is_gemini = True
     
     # Return Gemini format for Gemini models, Anthropic format for all others
     # This ensures Anthropic format always has 'content' field, Gemini format has 'usageMetadata'
-    if not is_gemini_path:
+    if not is_gemini:
         # Return Anthropic Messages API format - MUST include 'content' array field
         response = {
             "id": f"msg_{uuid.uuid4().hex}",
@@ -796,24 +799,13 @@ async def generate_content(request: Request, authorization: str = Header(None)):
                 "output_tokens": 20
             }
         }
-        # Verify content field exists before returning
-        if 'content' not in response:
-            error_msg = f"CRITICAL: Anthropic response missing 'content' field! Response keys: {list(response.keys())}"
-            print(f"[ERROR] {error_msg}")
-            # Add content field if missing (safety check)
-            response['content'] = [{"type": "text", "text": "Error: content field was missing, but now added"}]
+        # Ensure content field exists
+        if 'content' not in response or not isinstance(response.get('content'), list):
+            response['content'] = [{"type": "text", "text": "Hello! This is a mock response from the Vertex AI Anthropic endpoint. I'm processing your request."}]
         
-        response_debug = {
-            'id': response['id'],
-            'has_content': 'content' in response,
-            'content_type': type(response.get('content')).__name__,
-            'content_length': len(response.get('content', [])) if isinstance(response.get('content'), list) else 0,
-            'all_keys': list(response.keys())
-        }
-        print(f"[DEBUG] Returning Anthropic format response: {json.dumps(response_debug)}")
         return response
     
-    # Return Vertex AI Gemini format (only reached if is_gemini_path is True)
+    # Return Vertex AI Gemini format (only reached if is_gemini is True)
     # IMPORTANT: Gemini format requires "usageMetadata" (not "usage")
     response = {
         "candidates": [
@@ -1728,19 +1720,7 @@ async def azure_responses_api(request: Request):
         # Reuse the exact same logic as your existing /responses endpoint
         return await create_response(request)
     except Exception as e:
-        import traceback
-        error_msg = f"Error in azure_responses_api: {str(e)}"
-        print(f"[ERROR] {error_msg}")
-        print(f"[ERROR] Traceback:\n{traceback.format_exc()}")
-        print(f"[ERROR] Request URL: {request.url}")
-        print(f"[ERROR] Request method: {request.method}")
-        try:
-            body = await request.body()
-            print(f"[ERROR] Request body: {body.decode('utf-8', errors='ignore')[:500]}")
-        except:
-            pass
-        
-        # Return detailed error response
+        # Return detailed error response to client
         error_detail = await get_error_detail_with_body(e, request, "azure_responses_api")
         raise HTTPException(
             status_code=500,
@@ -1908,10 +1888,6 @@ async def catch_all_vertex_with_colons(request: Request, path: str):
     # Extract the actual path from the request URL
     request_path = request.url.path
     
-    # Log all unmatched POST requests for debugging
-    print(f"[DEBUG] catch_all_vertex received unmatched POST path: {request_path}")
-    print(f"[DEBUG] Request method: {request.method}, Headers: {dict(request.headers)}")
-    
     # Only handle paths that look like Vertex AI endpoints
     # Check for Vertex AI patterns: /v1/projects/, paths with colons, or common Vertex methods
     is_vertex_path = (
@@ -1935,17 +1911,13 @@ async def catch_all_vertex_with_colons(request: Request, path: str):
     
     if not is_vertex_path:
         # Not a Vertex AI path, return 404 with details
-        print(f"[DEBUG] Not a Vertex AI path, returning 404")
         error_detail = format_detailed_error(
             Exception("Path does not match Vertex AI endpoint patterns"),
             request,
             "catch_all_vertex_path_check"
         )
-        error_detail["error"]["message"] = f"No handler found for path: {request_path}"
+        error_detail["error"]["message"] = f"No handler found for path: {request_path}. Supported Vertex AI patterns: /v1/projects/.../:generateContent, /v1/projects/.../:predict, /:generateContent, /:predict, /:rawPredict"
         raise HTTPException(status_code=404, detail=error_detail)
-    
-    # Log Vertex AI paths we receive for debugging
-    print(f"[DEBUG] Processing as Vertex AI path: {request_path}")
     
     # Check if this is a generateContent endpoint (multiple patterns)
     is_generate_content = (
@@ -1959,14 +1931,10 @@ async def catch_all_vertex_with_colons(request: Request, path: str):
     
     if is_generate_content:
         authorization = request.headers.get("authorization") or request.headers.get("Authorization")
-        print(f"[DEBUG] Routing to generate_content handler")
         try:
             return await generate_content(request, authorization)
         except Exception as e:
-            import traceback
-            print(f"[ERROR] catch_all_vertex generateContent failed: {str(e)}")
-            print(f"[ERROR] Traceback:\n{traceback.format_exc()}")
-            # Return detailed error response
+            # Return detailed error response to client
             error_detail = await get_error_detail_with_body(e, request, "vertex_generate_content")
             raise HTTPException(status_code=500, detail=error_detail)
     
@@ -1982,14 +1950,10 @@ async def catch_all_vertex_with_colons(request: Request, path: str):
     
     if is_predict:
         authorization = request.headers.get("authorization") or request.headers.get("Authorization")
-        print(f"[DEBUG] Routing to predict handler")
         try:
             return await predict(request, authorization)
         except Exception as e:
-            import traceback
-            print(f"[ERROR] catch_all_vertex predict failed: {str(e)}")
-            print(f"[ERROR] Traceback:\n{traceback.format_exc()}")
-            # Return detailed error response
+            # Return detailed error response to client
             error_detail = await get_error_detail_with_body(e, request, "vertex_predict")
             raise HTTPException(status_code=500, detail=error_detail)
     
@@ -2006,19 +1970,14 @@ async def catch_all_vertex_with_colons(request: Request, path: str):
     
     if is_raw_predict:
         authorization = request.headers.get("authorization") or request.headers.get("Authorization")
-        print(f"[DEBUG] Routing to predict handler (rawPredict)")
         try:
             return await predict(request, authorization)
         except Exception as e:
-            import traceback
-            print(f"[ERROR] catch_all_vertex rawPredict failed: {str(e)}")
-            print(f"[ERROR] Traceback:\n{traceback.format_exc()}")
-            # Return detailed error response
+            # Return detailed error response to client
             error_detail = await get_error_detail_with_body(e, request, "vertex_raw_predict")
             raise HTTPException(status_code=500, detail=error_detail)
     
-    # If it's a Vertex path but doesn't match our handlers, log and return 404 with details
-    print(f"[WARNING] Vertex AI path recognized but no handler matched: {request_path}")
+    # If it's a Vertex path but doesn't match our handlers, return 404 with details
     error_detail = format_detailed_error(
         Exception(f"Vertex AI path recognized but no handler available"),
         request,
