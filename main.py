@@ -895,6 +895,7 @@ async def generate_content_bad(request: Request, authorization: str = Header(Non
 
 
 @app.post("/predict")
+@app.post("/rawPredict")
 @app.post("/v1/projects/adroit-crow-413218/locations/us-central1/publishers/google/models/textembedding-gecko@001:predict")
 @app.post("/v1/projects/pathrise-convert-1606954137718/locations/us-central1/publishers/google/models/textembedding-gecko@001:predict")
 async def predict(request: Request, authorization: str = Header(None)):
@@ -1031,6 +1032,13 @@ async def vertex_predict_catchall(request: Request, project: str, location: str,
             "billableCharacterCount": billable_character_count
         }
     }
+
+
+@app.post("/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:rawPredict")
+async def vertex_raw_predict_catchall(request: Request, project: str, location: str, model: str, authorization: str = Header(None)):
+    """Catch-all endpoint for Vertex AI rawPredict - accepts any project/location/model"""
+    # rawPredict is similar to predict, so delegate to the same handler
+    return await vertex_predict_catchall(request, project, location, model, authorization)
 
 
 @app.post("/runs")
@@ -1827,14 +1835,19 @@ async def catch_all_vertex_with_colons(request: Request, path: str):
         "/v1/projects/" in request_path or 
         ":generateContent" in request_path or 
         ":predict" in request_path or
+        ":rawPredict" in request_path or
         request_path.endswith("generateContent") or
         request_path.endswith("predict") or
+        request_path.endswith("rawPredict") or
         request_path.endswith(":generateContent") or
         request_path.endswith(":predict") or
+        request_path.endswith(":rawPredict") or
         path.endswith("generateContent") or
         path.endswith("predict") or
+        path.endswith("rawPredict") or
         path.endswith(":generateContent") or
-        path.endswith(":predict")
+        path.endswith(":predict") or
+        path.endswith(":rawPredict")
     )
     
     if not is_vertex_path:
@@ -1897,6 +1910,30 @@ async def catch_all_vertex_with_colons(request: Request, path: str):
             error_detail = await get_error_detail_with_body(e, request, "vertex_predict")
             raise HTTPException(status_code=500, detail=error_detail)
     
+    # Check if this is a rawPredict endpoint (multiple patterns)
+    # rawPredict is similar to predict, so we'll use the same handler
+    is_raw_predict = (
+        ":rawPredict" in request_path or 
+        request_path.endswith("rawPredict") or
+        request_path.endswith(":rawPredict") or
+        ":rawPredict" in path or
+        path.endswith("rawPredict") or
+        path.endswith(":rawPredict")
+    )
+    
+    if is_raw_predict:
+        authorization = request.headers.get("authorization") or request.headers.get("Authorization")
+        print(f"[DEBUG] Routing to predict handler (rawPredict)")
+        try:
+            return await predict(request, authorization)
+        except Exception as e:
+            import traceback
+            print(f"[ERROR] catch_all_vertex rawPredict failed: {str(e)}")
+            print(f"[ERROR] Traceback:\n{traceback.format_exc()}")
+            # Return detailed error response
+            error_detail = await get_error_detail_with_body(e, request, "vertex_raw_predict")
+            raise HTTPException(status_code=500, detail=error_detail)
+    
     # If it's a Vertex path but doesn't match our handlers, log and return 404 with details
     print(f"[WARNING] Vertex AI path recognized but no handler matched: {request_path}")
     error_detail = format_detailed_error(
@@ -1904,7 +1941,7 @@ async def catch_all_vertex_with_colons(request: Request, path: str):
         request,
         "catch_all_vertex_no_handler"
     )
-    error_detail["error"]["message"] = f"Vertex AI path '{request_path}' recognized but no handler matched. Supported handlers: generateContent, predict"
+    error_detail["error"]["message"] = f"Vertex AI path '{request_path}' recognized but no handler matched. Supported handlers: generateContent, predict, rawPredict"
     raise HTTPException(status_code=404, detail=error_detail)
 
 
