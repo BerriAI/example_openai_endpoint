@@ -194,6 +194,15 @@ def format_detailed_error(
         }
     }
     
+    # Clearer message for KeyError (e.g. 'content' or 'candidates') to aid debugging format mismatches
+    if isinstance(error, KeyError):
+        key = str(error).strip("'\"")
+        error_detail["error"]["message"] = (
+            f"Missing required key '{key}' in response. "
+            "Claude/Anthropic models expect a top-level 'content' array; Gemini models expect 'candidates'. "
+            f"This may indicate a response-format mismatch. Original: {error}."
+        )
+    
     # Add sanitized headers (mask sensitive values)
     headers_dict = dict(request.headers)
     sanitized_headers = {}
@@ -240,6 +249,74 @@ async def get_error_detail_with_body(
     return error_detail
 
 
+def _validate_response_format(response: dict, model: Optional[str], is_gemini: bool) -> Optional[dict]:
+    """
+    Validate that the response matches the expected format for the model.
+    Returns an error dict for HTTP 500 if invalid, None if ok.
+    Logs clearly on the server when a format mismatch or structural bug is detected.
+    """
+    model_lower = (model or "").lower()
+    has_candidates = "candidates" in response
+    has_content = "content" in response and isinstance(response.get("content"), list)
+
+    # Misclassification: Claude model but we built Gemini format (causes KeyError: 'content' in LiteLLM)
+    if "claude" in model_lower and has_candidates and not has_content:
+        log.error(
+            "Format misclassification: Claude model '%s' received Gemini format (candidates, no top-level content). "
+            "Response keys: %s. This will cause KeyError: 'content' in LiteLLM Anthropic transformation.",
+            model, list(response.keys())
+        )
+        return {
+            "error": {
+                "message": (
+                    f"Response format mismatch: Model '{model}' is a Claude/Anthropic model but the server produced "
+                    "a Gemini-format response (with 'candidates' instead of 'content'). "
+                    "The LiteLLM/Anthropic client expects a top-level 'content' array. "
+                    "This is a format-detection bug on the server. Please report."
+                ),
+                "code": "FORMAT_MISMATCH_CLAUDE_GOT_GEMINI",
+            }
+        }
+    # Misclassification: Gemini model but we built Anthropic format
+    if "gemini" in model_lower and has_content and not has_candidates:
+        log.error(
+            "Format misclassification: Gemini model '%s' received Anthropic format (content, no candidates). "
+            "Response keys: %s.",
+            model, list(response.keys())
+        )
+        return {
+            "error": {
+                "message": (
+                    f"Response format mismatch: Model '{model}' is a Gemini model but the server produced "
+                    "an Anthropic-format response (with 'content' instead of 'candidates'). "
+                    "The Vertex/Gemini client expects 'candidates'. This is a format-detection bug on the server. Please report."
+                ),
+                "code": "FORMAT_MISMATCH_GEMINI_GOT_ANTHROPIC",
+            }
+        }
+
+    # Structural validation: required top-level key must exist
+    if is_gemini:
+        if not has_candidates:
+            log.error("Invalid Gemini response: missing 'candidates'. Model: %s, response keys: %s", model, list(response.keys()))
+            return {
+                "error": {
+                    "message": f"Response format error: Gemini format requires a top-level 'candidates' array. Model: {model}. This is a server-side bug.",
+                    "code": "INVALID_GEMINI_RESPONSE",
+                }
+            }
+    else:
+        if not has_content:
+            log.error("Invalid Anthropic response: missing or invalid 'content'. Model: %s, response keys: %s", model, list(response.keys()))
+            return {
+                "error": {
+                    "message": f"Response format error: Anthropic/Claude format requires a top-level 'content' array. Model: {model}. This is a server-side bug.",
+                    "code": "INVALID_ANTHROPIC_RESPONSE",
+                }
+            }
+    return None
+
+
 limiter = Limiter(key_func=get_request_url)
 load_dotenv()
 
@@ -249,9 +326,30 @@ load_dotenv()
 # Note: Upgraded to python-multipart 0.0.20 which has better handling, but warning may still appear.
 logging.getLogger("multipart").setLevel(logging.ERROR)  # Only show errors, not warnings
 
+log = logging.getLogger(__name__)
+
 app = FastAPI()
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Return a clear, non-leaking error to the client; log the full traceback on the server."""
+    if isinstance(exc, HTTPException):
+        raise exc
+    log.exception("Unhandled exception: %s", exc)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": {
+                "message": "Internal server error. The request could not be processed. Check server logs for details.",
+                "code": "INTERNAL_ERROR",
+            }
+        },
+    )
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -294,6 +392,7 @@ async def completion(request: Request):
         await asyncio.sleep(float(_time_to_sleep))
 
     data = await request.json()
+    data = data if isinstance(data, dict) else {}
 
     if data.get("model") == "429":
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
@@ -312,38 +411,99 @@ async def completion(request: Request):
         sleep_time = get_histogram_sleep_time()
         print(f"[DEGRADED MODE] Sleeping for {sleep_time:.1f} seconds ({sleep_time/60:.1f} minutes) - histogram distribution")
         await asyncio.sleep(sleep_time)
-    if data.get("stream") == True:
+    # For /v1/chat/completions, LiteLLM's Vertex AI Anthropic expects a body with "content".
+    # data_generator() yields OpenAI format (choices/delta); returning it causes KeyError: 'content'.
+    # So when path is /v1/chat/completions, do NOT stream—fall through to return Anthropic JSON.
+    _path_for_claude = request.url.path
+    if data.get("stream") == True and "/v1/chat/completions" not in _path_for_claude:
         return StreamingResponse(
             content=data_generator(),
             media_type="text/event-stream",
         )
-    else:
-        _model = data.get("model")
-        if _model == "gpt-5":
-            _model = "gpt-12"
-        else:
-            _model = "gpt-3.5-turbo-0301"
-        response_id = uuid.uuid4().hex
-        response = {
-            "id": f"chatcmpl-{response_id}",
-            "object": "chat.completion",
-            "created": 1677652288,
-            "model": _model,
-            "system_fingerprint": "fp_44709d6fcb",
-            "choices": [
-                {
-                    "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": "\n\nHello there, how may I assist you today?",
-                    },
-                    "logprobs": None,
-                    "finish_reason": "stop",
-                }
+    # Model: body (model, model_name, modelId, model_id, litellm_model_id), path (Azure), query,
+    # generationConfig, metadata, or headers (X-Model, X-LiteLLM-Model). LiteLLM may put model
+    # in different places when calling /v1/chat/completions for Vertex AI Anthropic.
+    _path_params = getattr(request, "path_params", None) or {}
+    _model = (
+        data.get("model")
+        or data.get("model_name")
+        or data.get("modelId")
+        or data.get("model_id")
+        or data.get("litellm_model_id")
+        or _path_params.get("model")
+        or (getattr(request, "query_params", None) or {}).get("model")
+        or (data.get("generationConfig") or {}).get("model")
+        or (data.get("metadata") or {}).get("model")
+        or (data.get("metadata") or {}).get("model_name")
+        or request.headers.get("X-Model")
+        or request.headers.get("x-model")
+        or request.headers.get("X-LiteLLM-Model")
+        or request.headers.get("x-litellm-model")
+        or ""
+    )
+    # Coerce to str so .lower() is safe; non-string (e.g. dict) treated as no model.
+    _model = _model if isinstance(_model, str) else ""
+    # Vertex-style body ("contents") without "model" or "messages": LiteLLM may omit model;
+    # assume Anthropic so we return "content" and avoid KeyError in anthropic transformation.
+    if not _model and "contents" in data and "messages" not in data:
+        _model = "claude"
+    # LiteLLM routes Vertex AI Anthropic (Claude) to /v1/chat/completions and may omit model
+    # in the body. If we still have no model and path is exactly /v1/chat/completions,
+    # assume Claude so we return Anthropic format (content) and avoid KeyError.
+    if not _model and "/v1/chat/completions" in _path_for_claude:
+        _model = "claude"
+    _model = _model or ""
+    _model_lower = _model.lower()
+
+    # When LiteLLM routes Claude (Vertex AI Anthropic) to /v1/chat/completions, it
+    # expects Anthropic Messages API format (top-level "content" array). OpenAI format
+    # (choices/usage) causes KeyError: 'content' in litellm anthropic transformation.
+    # Also: path /v1/chat/completions is used by LiteLLM for Vertex AI Anthropic; the
+    # model in the body may be omitted or not contain "claude", so treat that path as Claude.
+    is_claude = (_model and "claude" in _model_lower) or "/v1/chat/completions" in _path_for_claude
+    if is_claude:
+        _disp = _model or "claude"
+        resp = {
+            "id": f"msg_{uuid.uuid4().hex}",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "\n\nHello there, how may I assist you today?"}
             ],
-            "usage": {"prompt_tokens": 9, "completion_tokens": 12, "total_tokens": 21},
+            "model": _disp,
+            "stop_reason": "end_turn",
+            "stop_sequence": None,
+            "usage": {"input_tokens": 10, "output_tokens": 20},
         }
-        return response
+        print(f"[fmt] completion path={request.url.path} body_keys={list(data.keys())} model={_disp} branch=claude_anthropic response_keys={list(resp.keys())}")
+        return resp
+
+    if _model == "gpt-5":
+        _model = "gpt-12"
+    else:
+        _model = "gpt-3.5-turbo-0301"
+    response_id = uuid.uuid4().hex
+    response = {
+        "id": f"chatcmpl-{response_id}",
+        "object": "chat.completion",
+        "created": 1677652288,
+        "model": _model,
+        "system_fingerprint": "fp_44709d6fcb",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "\n\nHello there, how may I assist you today?",
+                },
+                "logprobs": None,
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 9, "completion_tokens": 12, "total_tokens": 21},
+    }
+    print(f"[fmt] completion path={request.url.path} body_keys={list(data.keys())} model={_model} branch=openai response_keys={list(response.keys())}")
+    return response
 
 
 # for completion
@@ -767,20 +927,35 @@ async def generate_content(request: Request, authorization: str = Header(None)):
     
     # Also check request body for model information (fallback)
     if not model and isinstance(data, dict):
-        model = data.get("model") or data.get("model_name") or data.get("modelId")
+        model = data.get("model") or data.get("model_name") or data.get("modelId") or data.get("model_id")
     
     # Determine if this is a Gemini model: check path OR model name
-    # Gemini models have "gemini" in their name (e.g., gemini-2.0-flash-lite, gemini-2.5-pro)
-    is_gemini = False
-    if model:
-        is_gemini = "gemini" in model.lower()
-    elif "/models/gemini" in request_path.lower():
-        is_gemini = True
+    # Claude models MUST get Anthropic format (with 'content'). Gemini gets Gemini format (with 'candidates', 'usageMetadata').
+    # Check path (only /models/gemini or /models/claude to avoid false positives from project IDs)
+    request_path_lower = request_path.lower()
+    path_has_gemini = "/models/gemini" in request_path_lower
+    path_has_claude = "/models/claude" in request_path_lower
     
-    # Return Gemini format for Gemini models, Anthropic format for all others
-    # This ensures Anthropic format always has 'content' field, Gemini format has 'usageMetadata'
-    if not is_gemini:
-        # Return Anthropic Messages API format - MUST include 'content' array field
+    # Check model name from path or body
+    model_lower = (model or "").lower()
+    model_has_gemini = "gemini" in model_lower if model else False
+    model_has_claude = "claude" in model_lower if model else False
+    
+    # Claude models MUST get Anthropic format. Gemini MUST get Gemini format (usageMetadata, candidates).
+    # When model/path give no signal: default to Gemini (Vertex generateContent is mostly Gemini; returning
+    # Anthropic for Gemini causes "usageMetadata not found" in LiteLLM).
+    is_gemini = (path_has_gemini or model_has_gemini or (not path_has_claude and not model_has_claude)) and not (path_has_claude or model_has_claude)
+    
+    print(f"[fmt] generate_content path={request_path} model={model} is_gemini={is_gemini} path_g={path_has_gemini} path_c={path_has_claude} model_g={model_has_gemini} model_c={model_has_claude}")
+    
+    # CRITICAL: Gemini models MUST get Gemini format, Anthropic models MUST get Anthropic format
+    if is_gemini:
+        # Return Gemini format - DO NOT return Anthropic format for Gemini models
+        # Skip to Gemini format section below
+        pass
+    else:
+        # Return Anthropic format for Anthropic/Claude models only (we only reach here when we detected Claude)
+        # Anthropic Messages API format - MUST include 'content' array and 'usage' (not usageMetadata)
         response = {
             "id": f"msg_{uuid.uuid4().hex}",
             "type": "message",
@@ -791,7 +966,7 @@ async def generate_content(request: Request, authorization: str = Header(None)):
                     "text": "Hello! This is a mock response from the Vertex AI Anthropic endpoint. I'm processing your request."
                 }
             ],
-            "model": model or "claude-3.7-sonnet",
+            "model": model or "unknown",
             "stop_reason": "end_turn",
             "stop_sequence": None,
             "usage": {
@@ -803,6 +978,10 @@ async def generate_content(request: Request, authorization: str = Header(None)):
         if 'content' not in response or not isinstance(response.get('content'), list):
             response['content'] = [{"type": "text", "text": "Hello! This is a mock response from the Vertex AI Anthropic endpoint. I'm processing your request."}]
         
+        err = _validate_response_format(response, model, False)
+        if err:
+            return JSONResponse(status_code=500, content=err)
+        print(f"[fmt] generate_content branch=anthropic response_keys={list(response.keys())}")
         return response
     
     # Return Vertex AI Gemini format (only reached if is_gemini is True)
@@ -859,6 +1038,10 @@ async def generate_content(request: Request, authorization: str = Header(None)):
         }
     }
 
+    err = _validate_response_format(response, model, True)
+    if err:
+        return JSONResponse(status_code=500, content=err)
+    print(f"[fmt] generate_content branch=gemini response_keys={list(response.keys())}")
     return response
 
 
@@ -955,6 +1138,91 @@ async def predict(request: Request, authorization: str = Header(None)):
 
     data = await request.json()
     
+    # Extract model from path, body, or headers to determine if this is a Claude model
+    request_path = request.url.path
+    model_from_path = None
+    if "/models/" in request_path:
+        try:
+            model_part = request_path.split("/models/")[1].split(":")[0]
+            if model_part:
+                model_from_path = model_part
+        except:
+            pass
+    
+    # Also check request body for model information
+    model_from_body = None
+    if isinstance(data, dict):
+        model_from_body = data.get("model") or data.get("model_name") or data.get("modelId") or data.get("model_id")
+    
+    # Check headers for model information (LiteLLM may pass model in headers)
+    model_from_headers = (
+        request.headers.get("X-Model") or
+        request.headers.get("x-model") or
+        request.headers.get("X-LiteLLM-Model") or
+        request.headers.get("x-litellm-model")
+    )
+    
+    # Determine final model
+    final_model = model_from_path or model_from_body or model_from_headers or ""
+    model_lower = (final_model or "").lower()
+    
+    # Check request body structure: Claude requests use "contents" (Anthropic format) or "messages" (chat format),
+    # while embedding requests use "instances" (Vertex AI embedding format)
+    has_contents = isinstance(data, dict) and "contents" in data
+    has_messages = isinstance(data, dict) and "messages" in data
+    has_instances = isinstance(data, dict) and "instances" in data
+    # If it has messages or contents (but not instances), it's a Claude request
+    body_suggests_claude = (has_contents or has_messages) and not has_instances
+    
+    # Check if this is a Claude model
+    path_has_claude = "/models/claude" in request_path.lower()
+    model_has_claude = "claude" in model_lower if final_model else False
+    
+    # For :rawPredict or :predict endpoints, if we can't determine the model and the request
+    # doesn't have "instances" (embedding format), assume it's Claude since LiteLLM uses
+    # these endpoints for Claude models via Vertex AI
+    is_raw_predict_endpoint = ":rawPredict" in request_path or request_path.endswith("rawPredict") or ":predict" in request_path or request_path.endswith("predict")
+    no_instances = not has_instances
+    fallback_to_claude = is_raw_predict_endpoint and no_instances and not final_model
+    
+    # If body has "contents" but no "instances", it's likely a Claude request
+    # Or if it's a rawPredict/predict endpoint without instances and no model detected, assume Claude
+    is_claude = path_has_claude or model_has_claude or body_suggests_claude or fallback_to_claude
+    
+    # Log for debugging
+    print(f"[predict] path={request_path} model={final_model} path_has_claude={path_has_claude} model_has_claude={model_has_claude} has_contents={has_contents} has_messages={has_messages} has_instances={has_instances} body_suggests_claude={body_suggests_claude} fallback_to_claude={fallback_to_claude} is_claude={is_claude}")
+    
+    # If this is a Claude model, return Anthropic format (not embedding format)
+    if is_claude:
+        response = {
+            "id": f"msg_{uuid.uuid4().hex}",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"Hello! This is a mock response from Vertex AI Anthropic endpoint via predict/rawPredict. Model: {final_model or 'claude'}"
+                }
+            ],
+            "model": final_model or "claude",
+            "stop_reason": "end_turn",
+            "stop_sequence": None,
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 20
+            }
+        }
+        # Ensure content field exists
+        if 'content' not in response or not isinstance(response.get('content'), list):
+            response['content'] = [{"type": "text", "text": f"Hello! This is a mock response from Vertex AI Anthropic endpoint via predict/rawPredict. Model: {final_model or 'claude'}"}]
+        
+        err = _validate_response_format(response, final_model or "claude", False)
+        if err:
+            return JSONResponse(status_code=500, content=err)
+        print(f"[fmt] predict/rawPredict path={request_path} model={final_model} branch=anthropic response_keys={list(response.keys())}")
+        return response
+    
+    # Otherwise, return embedding format (for embedding models)
     # Process the input data
     instances = data.get('instances', [])
     num_instances = len(instances)
@@ -997,22 +1265,47 @@ async def vertex_generate_content_catchall(request: Request, project: str, locat
 
     data = await request.json()
     
-    # Check if this is an Anthropic model (contains "claude")
-    is_anthropic = "claude" in model.lower()
+    # Also check request body for model information as fallback
+    model_from_body = None
+    if isinstance(data, dict):
+        model_from_body = data.get("model") or data.get("model_name") or data.get("modelId") or data.get("model_id")
     
-    # Return Anthropic Messages API format for Anthropic models
-    if is_anthropic:
-        return {
+    # Use model from path or body, prioritizing path
+    final_model = model or model_from_body or ""
+    
+    # Model detection: only /models/gemini or /models/claude in path to avoid false positives (e.g. "gemini" in project ID)
+    request_path_lower = request.url.path.lower()
+    path_has_gemini = "/models/gemini" in request_path_lower
+    path_has_claude = "/models/claude" in request_path_lower
+    
+    model_lower = (final_model or "").lower()
+    model_has_gemini = "gemini" in model_lower if final_model else False
+    model_has_claude = "claude" in model_lower if final_model else False
+    
+    # Claude models MUST get Anthropic format (content, usage). Gemini MUST get Gemini format (candidates, usageMetadata).
+    # When model/path give no signal: default to Gemini (Vertex generateContent is mostly Gemini).
+    is_gemini = (path_has_gemini or model_has_gemini or (not path_has_claude and not model_has_claude)) and not (path_has_claude or model_has_claude)
+    
+    print(f"[fmt] vertex_catchall path={request.url.path} model={final_model} is_gemini={is_gemini} path_g={path_has_gemini} path_c={path_has_claude} model_g={model_has_gemini} model_c={model_has_claude}")
+    
+    # CRITICAL: Gemini models MUST get Gemini format, Anthropic models MUST get Anthropic format
+    if is_gemini:
+        # Return Gemini format - DO NOT return Anthropic format for Gemini models
+        # Skip to Gemini format section below
+        pass
+    else:
+        # Return Anthropic format for Anthropic/Claude models only (we only reach here when we detected Claude)
+        response = {
             "id": f"msg_{uuid.uuid4().hex}",
             "type": "message",
             "role": "assistant",
             "content": [
                 {
                     "type": "text",
-                    "text": f"Hello! This is a mock response from Vertex AI Anthropic endpoint. Model: {model}"
+                    "text": f"Hello! This is a mock response from Vertex AI Anthropic endpoint. Model: {final_model or model}"
                 }
             ],
-            "model": model,
+            "model": final_model or model or "unknown",
             "stop_reason": "end_turn",
             "stop_sequence": None,
             "usage": {
@@ -1020,9 +1313,18 @@ async def vertex_generate_content_catchall(request: Request, project: str, locat
                 "output_tokens": 20
             }
         }
+        # Safety check: Ensure content field exists and is a list
+        if 'content' not in response or not isinstance(response.get('content'), list):
+            response['content'] = [{"type": "text", "text": f"Hello! This is a mock response from Vertex AI Anthropic endpoint. Model: {final_model or model}"}]
+        
+        err = _validate_response_format(response, final_model or model, False)
+        if err:
+            return JSONResponse(status_code=500, content=err)
+        print(f"[fmt] vertex_catchall branch=anthropic response_keys={list(response.keys())}")
+        return response
     
-    # Otherwise return Vertex AI Gemini format
-    return {
+    # Return Vertex AI Gemini format (only reached if is_gemini is True)
+    response = {
         "candidates": [
             {
                 "content": {
@@ -1073,6 +1375,11 @@ async def vertex_generate_content_catchall(request: Request, project: str, locat
             "totalTokenCount": 56
         }
     }
+    err = _validate_response_format(response, final_model or model, True)
+    if err:
+        return JSONResponse(status_code=500, content=err)
+    print(f"[fmt] vertex_catchall branch=gemini response_keys={list(response.keys())}")
+    return response
 
 
 @app.post("/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:predict")
@@ -1083,6 +1390,78 @@ async def vertex_predict_catchall(request: Request, project: str, location: str,
 
     data = await request.json()
     
+    # Check headers for model information (LiteLLM may pass model in headers)
+    model_from_headers = (
+        request.headers.get("X-Model") or
+        request.headers.get("x-model") or
+        request.headers.get("X-LiteLLM-Model") or
+        request.headers.get("x-litellm-model")
+    )
+    
+    # Use model from path, body, or headers
+    final_model = model or model_from_headers or ""
+    if isinstance(data, dict):
+        model_from_body = data.get("model") or data.get("model_name") or data.get("modelId") or data.get("model_id")
+        if model_from_body:
+            final_model = model_from_body
+    
+    # Check request body structure: Claude requests use "contents" (Anthropic format) or "messages" (chat format),
+    # while embedding requests use "instances" (Vertex AI embedding format)
+    has_contents = isinstance(data, dict) and "contents" in data
+    has_messages = isinstance(data, dict) and "messages" in data
+    has_instances = isinstance(data, dict) and "instances" in data
+    # If it has messages or contents (but not instances), it's a Claude request
+    body_suggests_claude = (has_contents or has_messages) and not has_instances
+    
+    # Check if this is a Claude model
+    model_lower = (final_model or "").lower()
+    model_has_claude = "claude" in model_lower if final_model else False
+    request_path = request.url.path
+    path_has_claude = "/models/claude" in request_path.lower()
+    
+    # For :predict endpoints, if we can't determine the model and the request
+    # doesn't have "instances" (embedding format), assume it's Claude since LiteLLM uses
+    # these endpoints for Claude models via Vertex AI
+    is_predict_endpoint = ":predict" in request_path or request_path.endswith("predict")
+    no_instances = not has_instances
+    fallback_to_claude = is_predict_endpoint and no_instances and not final_model
+    
+    is_claude = path_has_claude or model_has_claude or body_suggests_claude or fallback_to_claude
+    
+    # Log for debugging
+    print(f"[vertex_predict_catchall] path={request_path} model={final_model or model} path_has_claude={path_has_claude} model_has_claude={model_has_claude} has_contents={has_contents} has_messages={has_messages} has_instances={has_instances} body_suggests_claude={body_suggests_claude} fallback_to_claude={fallback_to_claude} is_claude={is_claude}")
+    
+    # If this is a Claude model, return Anthropic format (not embedding format)
+    if is_claude:
+        response = {
+            "id": f"msg_{uuid.uuid4().hex}",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"Hello! This is a mock response from Vertex AI Anthropic endpoint via predict. Model: {final_model or model}"
+                }
+            ],
+            "model": final_model or model or "claude",
+            "stop_reason": "end_turn",
+            "stop_sequence": None,
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 20
+            }
+        }
+        # Ensure content field exists
+        if 'content' not in response or not isinstance(response.get('content'), list):
+            response['content'] = [{"type": "text", "text": f"Hello! This is a mock response from Vertex AI Anthropic endpoint via predict. Model: {final_model or model}"}]
+        
+        err = _validate_response_format(response, final_model or model, False)
+        if err:
+            return JSONResponse(status_code=500, content=err)
+        print(f"[fmt] vertex_predict_catchall path={request_path} model={final_model or model} branch=anthropic response_keys={list(response.keys())}")
+        return response
+    
+    # Otherwise, return embedding format (for embedding models)
     instances = data.get('instances', [])
     num_instances = len(instances)
     
