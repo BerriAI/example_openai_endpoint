@@ -793,17 +793,19 @@ async def generate_content(request: Request, authorization: str = Header(None)):
             print(f"[DEBUG] Detected Anthropic model from request body: {model}")
     
     # Third check: simple path (/:generateContent or /generateContent) - LiteLLM uses this for Vertex AI Anthropic
-    # Default to Anthropic format for these paths when model can't be determined
+    # ALWAYS use Anthropic format for these paths - LiteLLM only uses them for Anthropic models via Vertex AI
     simple_paths = ["/:generateContent", "/generateContent"]
     is_simple_path = (
         request.url.path in simple_paths or
         (request.url.path.endswith(":generateContent") and "/models/" not in request.url.path and "/v1/projects/" not in request.url.path)
     )
     
-    if not is_anthropic and is_simple_path:
-        # Default to Anthropic format for simple paths (LiteLLM pattern for Vertex AI Anthropic)
+    if is_simple_path:
+        # ALWAYS use Anthropic format for simple paths (LiteLLM pattern for Vertex AI Anthropic)
         is_anthropic = True
-        print(f"[DEBUG] Defaulting to Anthropic format for simple path: {request.url.path} (model: {model})")
+        print(f"[DEBUG] FORCING Anthropic format for simple path: {request.url.path} (detected model: {model})")
+    elif not is_anthropic:
+        print(f"[DEBUG] Using Gemini format for path: {request.url.path} (model: {model})")
     
     # Return Anthropic Messages API format for Anthropic models
     if is_anthropic:
