@@ -753,105 +753,31 @@ async def generate_content(request: Request, authorization: str = Header(None)):
 
     data = await request.json()
     
-    # Detect model name from multiple sources:
-    # 1. URL path (e.g., /v1/projects/.../models/claude-4.5-haiku:generateContent)
-    # 2. Request body (model field)
-    # 3. Headers (x-model or similar)
+    # SIMPLIFIED LOGIC: Use path structure instead of model detection
+    # - Simple paths (/:generateContent, /generateContent) → Anthropic format (used by LiteLLM for Vertex AI Anthropic)
+    # - Paths with /models/gemini-... → Gemini format
+    # - Paths with /models/claude-... or /v1/projects/.../models/... → Anthropic format (has content field)
+    # - Everything else defaults to Anthropic format to ensure 'content' field is present
+    
+    request_path = request.url.path
+    # Check if path contains /models/gemini (works for both /v1/projects/.../models/gemini-... and /v1beta/models/gemini-...)
+    is_gemini_path = "/models/gemini" in request_path.lower()
+    
+    # Simple paths (/:generateContent, /generateContent) or paths without explicit Gemini model → Anthropic format
+    # This ensures all responses have 'content' field which is required
+    use_anthropic_format = not is_gemini_path
+    
+    # Extract model name from path for response
     model = None
-    path_parts = request.url.path.split("/")
-    for i, part in enumerate(path_parts):
-        if part == "models" and i + 1 < len(path_parts):
-            model = path_parts[i + 1].split(":")[0]  # Remove :generateContent suffix
-            break
+    if "/models/" in request_path:
+        try:
+            model_part = request_path.split("/models/")[1].split(":")[0]
+            if model_part:
+                model = model_part
+        except:
+            pass
     
-    # If not in path, try request body
-    if not model and isinstance(data, dict):
-        model = data.get("model") or data.get("model_name")
-    
-    # Check headers as fallback
-    if not model:
-        model = request.headers.get("x-model") or request.headers.get("model")
-    
-    # Log for debugging - include full request info for troubleshooting
-    # Also check request body more thoroughly for model information
-    if isinstance(data, dict):
-        # Check all possible model-related fields in request body
-        all_model_fields = {
-            'model': data.get('model'),
-            'model_name': data.get('model_name'),
-            'modelId': data.get('modelId'),
-            'contents': data.get('contents'),  # Vertex AI format
-            'contents_model': None
-        }
-        # Check if contents array has model info
-        if isinstance(data.get('contents'), list) and len(data.get('contents', [])) > 0:
-            first_content = data.get('contents', [{}])[0]
-            if isinstance(first_content, dict):
-                all_model_fields['contents_model'] = first_content.get('model')
-        
-        # Use first found model field
-        if not model:
-            for field_name, field_value in all_model_fields.items():
-                if field_value:
-                    model = field_value
-                    print(f"[DEBUG] Found model in request body field '{field_name}': {model}")
-                    break
-    
-    request_info = {
-        "path": request.url.path,
-        "detected_model": model,
-        "data_keys": list(data.keys()) if isinstance(data, dict) else 'N/A',
-        "data_sample": {k: str(v)[:100] if v else None for k, v in list(data.items())[:3]} if isinstance(data, dict) else None,
-        "headers": {k: v for k, v in request.headers.items() if k.lower() in ['user-agent', 'anthropic-version', 'content-type']}
-    }
-    print(f"[DEBUG] generate_content - {json.dumps(request_info, default=str)}")
-    
-    # Detect model type: Anthropic (claude) vs Gemini vs Unknown
-    is_gemini = False
-    is_anthropic = False
-    
-    # Check for Gemini models first (they need Gemini format)
-    if model:
-        model_lower = str(model).lower()
-        if "gemini" in model_lower:
-            is_gemini = True
-            print(f"[DEBUG] Detected Gemini model: {model}")
-        elif "claude" in model_lower:
-            is_anthropic = True
-            print(f"[DEBUG] Detected Anthropic model: {model}")
-    
-    # Check request body for model info
-    if not is_gemini and not is_anthropic and isinstance(data, dict):
-        body_model = data.get("model") or data.get("model_name") or data.get("modelId")
-        if body_model:
-            body_model_lower = str(body_model).lower()
-            if "gemini" in body_model_lower:
-                is_gemini = True
-                model = body_model
-                print(f"[DEBUG] Detected Gemini model from request body: {model}")
-            elif "claude" in body_model_lower:
-                is_anthropic = True
-                model = body_model
-                print(f"[DEBUG] Detected Anthropic model from request body: {model}")
-    
-    # For simple paths without detected model: default to Anthropic format
-    # (LiteLLM uses simple paths for Vertex AI Anthropic models)
-    simple_paths = ["/:generateContent", "/generateContent"]
-    is_simple_path = (
-        request.url.path in simple_paths or
-        (request.url.path.endswith(":generateContent") and "/models/" not in request.url.path and "/v1/projects/" not in request.url.path)
-    )
-    
-    if not is_gemini and not is_anthropic and is_simple_path:
-        # Default to Anthropic format for simple paths when model can't be determined
-        is_anthropic = True
-        print(f"[DEBUG] Defaulting to Anthropic format for simple path: {request.url.path} (model detection failed)")
-    
-    print(f"[DEBUG] Format decision - is_anthropic: {is_anthropic}, is_gemini: {is_gemini}, model: {model}")
-    
-    # Return Anthropic Messages API format for Anthropic models OR when model can't be determined on simple paths
-    # IMPORTANT: Always include 'content' field for Anthropic format (required by LiteLLM)
-    if is_anthropic or (not is_gemini and is_simple_path):
+    if use_anthropic_format:
         # Return Anthropic Messages API format - MUST include 'content' array field
         response = {
             "id": f"msg_{uuid.uuid4().hex}",
