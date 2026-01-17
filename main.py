@@ -1747,26 +1747,47 @@ async def catch_all_vertex_with_colons(request: Request, path: str):
     # Extract the actual path from the request URL
     request_path = request.url.path
     
+    # Log all unmatched POST requests for debugging
+    print(f"[DEBUG] catch_all_vertex received unmatched POST path: {request_path}")
+    print(f"[DEBUG] Request method: {request.method}, Headers: {dict(request.headers)}")
+    
     # Only handle paths that look like Vertex AI endpoints
-    # Check for Vertex AI patterns: /v1/projects/ or paths ending with colon methods
+    # Check for Vertex AI patterns: /v1/projects/, paths with colons, or common Vertex methods
     is_vertex_path = (
         "/v1/projects/" in request_path or 
         ":generateContent" in request_path or 
         ":predict" in request_path or
         request_path.endswith("generateContent") or
-        request_path.endswith("predict")
+        request_path.endswith("predict") or
+        request_path.endswith(":generateContent") or
+        request_path.endswith(":predict") or
+        path.endswith("generateContent") or
+        path.endswith("predict") or
+        path.endswith(":generateContent") or
+        path.endswith(":predict")
     )
     
     if not is_vertex_path:
-        # Not a Vertex AI path, return 404 (let FastAPI handle it normally)
+        # Not a Vertex AI path, return 404
+        print(f"[DEBUG] Not a Vertex AI path, returning 404")
         raise HTTPException(status_code=404, detail="Not Found")
     
     # Log Vertex AI paths we receive for debugging
-    print(f"[DEBUG] catch_all_vertex received Vertex AI path: {request_path}")
+    print(f"[DEBUG] Processing as Vertex AI path: {request_path}")
     
-    # Check if this is a generateContent endpoint
-    if ":generateContent" in request_path or request_path.endswith("generateContent"):
-        authorization = request.headers.get("authorization")
+    # Check if this is a generateContent endpoint (multiple patterns)
+    is_generate_content = (
+        ":generateContent" in request_path or 
+        request_path.endswith("generateContent") or
+        request_path.endswith(":generateContent") or
+        ":generateContent" in path or
+        path.endswith("generateContent") or
+        path.endswith(":generateContent")
+    )
+    
+    if is_generate_content:
+        authorization = request.headers.get("authorization") or request.headers.get("Authorization")
+        print(f"[DEBUG] Routing to generate_content handler")
         try:
             return await generate_content(request, authorization)
         except Exception as e:
@@ -1775,9 +1796,19 @@ async def catch_all_vertex_with_colons(request: Request, path: str):
             print(f"[ERROR] Traceback:\n{traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=str(e))
     
-    # Check if this is a predict endpoint
-    elif ":predict" in request_path or request_path.endswith("predict"):
-        authorization = request.headers.get("authorization")
+    # Check if this is a predict endpoint (multiple patterns)
+    is_predict = (
+        ":predict" in request_path or 
+        request_path.endswith("predict") or
+        request_path.endswith(":predict") or
+        ":predict" in path or
+        path.endswith("predict") or
+        path.endswith(":predict")
+    )
+    
+    if is_predict:
+        authorization = request.headers.get("authorization") or request.headers.get("Authorization")
+        print(f"[DEBUG] Routing to predict handler")
         try:
             return await predict(request, authorization)
         except Exception as e:
@@ -1786,7 +1817,8 @@ async def catch_all_vertex_with_colons(request: Request, path: str):
             print(f"[ERROR] Traceback:\n{traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=str(e))
     
-    # If it's a Vertex path but doesn't match our handlers, still return 404
+    # If it's a Vertex path but doesn't match our handlers, log and return 404
+    print(f"[WARNING] Vertex AI path recognized but no handler matched: {request_path}")
     raise HTTPException(status_code=404, detail="Not Found")
 
 
