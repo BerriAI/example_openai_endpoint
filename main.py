@@ -778,22 +778,32 @@ async def generate_content(request: Request, authorization: str = Header(None)):
     # Check if this is an Anthropic model (contains "claude")
     # Check model name, or check if request body contains Anthropic indicators
     is_anthropic = False
-    if model and "claude" in model.lower():
+    
+    # First check: model name from path or body contains "claude"
+    if model and "claude" in str(model).lower():
         is_anthropic = True
+        print(f"[DEBUG] Detected Anthropic model from model name: {model}")
+    
+    # Second check: request body contains Anthropic model name
     elif isinstance(data, dict):
-        # Check request body for Anthropic indicators
-        # Look for model name in various possible fields
         body_model = data.get("model") or data.get("model_name") or data.get("modelId")
         if body_model and "claude" in str(body_model).lower():
             is_anthropic = True
             model = body_model
-        # Also check if path is simple (/:generateContent) - LiteLLM uses this for Vertex AI Anthropic
-        elif request.url.path in ["/:generateContent", "/generateContent"] or (
-            request.url.path.endswith(":generateContent") and "/models/" not in request.url.path
-        ):
-            # Default to Anthropic format for simple paths (LiteLLM pattern for Vertex AI Anthropic)
-            is_anthropic = True
-            print(f"[DEBUG] Defaulting to Anthropic format for simple path: {request.url.path}")
+            print(f"[DEBUG] Detected Anthropic model from request body: {model}")
+    
+    # Third check: simple path (/:generateContent or /generateContent) - LiteLLM uses this for Vertex AI Anthropic
+    # Default to Anthropic format for these paths when model can't be determined
+    simple_paths = ["/:generateContent", "/generateContent"]
+    is_simple_path = (
+        request.url.path in simple_paths or
+        (request.url.path.endswith(":generateContent") and "/models/" not in request.url.path and "/v1/projects/" not in request.url.path)
+    )
+    
+    if not is_anthropic and is_simple_path:
+        # Default to Anthropic format for simple paths (LiteLLM pattern for Vertex AI Anthropic)
+        is_anthropic = True
+        print(f"[DEBUG] Defaulting to Anthropic format for simple path: {request.url.path} (model: {model})")
     
     # Return Anthropic Messages API format for Anthropic models
     if is_anthropic:
