@@ -753,9 +753,41 @@ async def generate_content(request: Request, authorization: str = Header(None)):
 
     data = await request.json()
     
-    # You can process the input data here if needed
-    # For now, we'll just return the hardcoded response
-
+    # Detect model name from URL path
+    # Extract model from URL path if it's in the path (e.g., from catch-all route parameter)
+    model = None
+    path_parts = request.url.path.split("/")
+    for i, part in enumerate(path_parts):
+        if part == "models" and i + 1 < len(path_parts):
+            model = path_parts[i + 1].split(":")[0]  # Remove :generateContent suffix
+            break
+    
+    # Check if this is an Anthropic model (contains "claude")
+    is_anthropic = model and "claude" in model.lower()
+    
+    # Return Anthropic Messages API format for Anthropic models
+    if is_anthropic:
+        response = {
+            "id": f"msg_{uuid.uuid4().hex}",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Hello! This is a mock response from the Vertex AI Anthropic endpoint. I'm processing your request."
+                }
+            ],
+            "model": model or "claude-3.7-sonnet",
+            "stop_reason": "end_turn",
+            "stop_sequence": None,
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 20
+            }
+        }
+        return response
+    
+    # Otherwise return Vertex AI Gemini format
     response = {
         "candidates": [
             {
@@ -946,7 +978,31 @@ async def vertex_generate_content_catchall(request: Request, project: str, locat
 
     data = await request.json()
     
-    # Return the same response format regardless of model name
+    # Check if this is an Anthropic model (contains "claude")
+    is_anthropic = "claude" in model.lower()
+    
+    # Return Anthropic Messages API format for Anthropic models
+    if is_anthropic:
+        return {
+            "id": f"msg_{uuid.uuid4().hex}",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"Hello! This is a mock response from Vertex AI Anthropic endpoint. Model: {model}"
+                }
+            ],
+            "model": model,
+            "stop_reason": "end_turn",
+            "stop_sequence": None,
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 20
+            }
+        }
+    
+    # Otherwise return Vertex AI Gemini format
     return {
         "candidates": [
             {
