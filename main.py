@@ -772,48 +772,67 @@ async def generate_content(request: Request, authorization: str = Header(None)):
     if not model:
         model = request.headers.get("x-model") or request.headers.get("model")
     
-    # Log for debugging
-    print(f"[DEBUG] generate_content - Path: {request.url.path}, Model: {model}, Data keys: {list(data.keys()) if isinstance(data, dict) else 'N/A'}")
+    # Log for debugging - include full request info for troubleshooting
+    request_info = {
+        "path": request.url.path,
+        "model": model,
+        "data_keys": list(data.keys()) if isinstance(data, dict) else 'N/A',
+        "headers": {k: v for k, v in request.headers.items() if k.lower() in ['user-agent', 'anthropic-version', 'content-type']}
+    }
+    print(f"[DEBUG] generate_content - {json.dumps(request_info)}")
     
-    # Check if this is an Anthropic model (contains "claude")
-    # Check model name, or check if request body contains Anthropic indicators
+    # Detect model type: Anthropic (claude) vs Gemini vs Unknown
+    is_gemini = False
     is_anthropic = False
     
-    # First check: model name from path or body contains "claude"
-    if model and "claude" in str(model).lower():
-        is_anthropic = True
-        print(f"[DEBUG] Detected Anthropic model from model name: {model}")
-    
-    # Second check: request body contains Anthropic model name
-    elif isinstance(data, dict):
-        body_model = data.get("model") or data.get("model_name") or data.get("modelId")
-        if body_model and "claude" in str(body_model).lower():
+    # Check for Gemini models first (they need Gemini format)
+    if model:
+        model_lower = str(model).lower()
+        if "gemini" in model_lower:
+            is_gemini = True
+            print(f"[DEBUG] Detected Gemini model: {model}")
+        elif "claude" in model_lower:
             is_anthropic = True
-            model = body_model
-            print(f"[DEBUG] Detected Anthropic model from request body: {model}")
+            print(f"[DEBUG] Detected Anthropic model: {model}")
     
-    # Third check: simple path (/:generateContent or /generateContent) - LiteLLM uses this for Vertex AI Anthropic
-    # ALWAYS use Anthropic format for these paths - LiteLLM only uses them for Anthropic models via Vertex AI
+    # Check request body for model info
+    if not is_gemini and not is_anthropic and isinstance(data, dict):
+        body_model = data.get("model") or data.get("model_name") or data.get("modelId")
+        if body_model:
+            body_model_lower = str(body_model).lower()
+            if "gemini" in body_model_lower:
+                is_gemini = True
+                model = body_model
+                print(f"[DEBUG] Detected Gemini model from request body: {model}")
+            elif "claude" in body_model_lower:
+                is_anthropic = True
+                model = body_model
+                print(f"[DEBUG] Detected Anthropic model from request body: {model}")
+    
+    # For simple paths without detected model: default to Anthropic format
+    # (LiteLLM uses simple paths for Vertex AI Anthropic models)
     simple_paths = ["/:generateContent", "/generateContent"]
     is_simple_path = (
         request.url.path in simple_paths or
         (request.url.path.endswith(":generateContent") and "/models/" not in request.url.path and "/v1/projects/" not in request.url.path)
     )
     
-    if is_simple_path:
-        # ALWAYS use Anthropic format for simple paths (LiteLLM pattern for Vertex AI Anthropic)
+    if not is_gemini and not is_anthropic and is_simple_path:
+        # Default to Anthropic format for simple paths when model can't be determined
         is_anthropic = True
-        print(f"[DEBUG] FORCING Anthropic format for simple path: {request.url.path} (detected model: {model})")
-    elif not is_anthropic:
-        print(f"[DEBUG] Using Gemini format for path: {request.url.path} (model: {model})")
+        print(f"[DEBUG] Defaulting to Anthropic format for simple path: {request.url.path} (model detection failed)")
     
-    # Return Anthropic Messages API format for Anthropic models
-    if is_anthropic:
+    print(f"[DEBUG] Format decision - is_anthropic: {is_anthropic}, is_gemini: {is_gemini}, model: {model}")
+    
+    # Return Anthropic Messages API format for Anthropic models OR when model can't be determined on simple paths
+    # IMPORTANT: Always include 'content' field for Anthropic format (required by LiteLLM)
+    if is_anthropic or (not is_gemini and is_simple_path):
+        # Return Anthropic Messages API format - MUST include 'content' array field
         response = {
             "id": f"msg_{uuid.uuid4().hex}",
             "type": "message",
             "role": "assistant",
-            "content": [
+            "content": [  # REQUIRED: This field must be present and be an array
                 {
                     "type": "text",
                     "text": "Hello! This is a mock response from the Vertex AI Anthropic endpoint. I'm processing your request."
@@ -827,6 +846,7 @@ async def generate_content(request: Request, authorization: str = Header(None)):
                 "output_tokens": 20
             }
         }
+        print(f"[DEBUG] Returning Anthropic format response with content field: {json.dumps({'id': response['id'], 'has_content': 'content' in response, 'content_type': type(response.get('content')).__name__})}")
         return response
     
     # Otherwise return Vertex AI Gemini format
