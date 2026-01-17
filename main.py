@@ -760,12 +760,6 @@ async def generate_content(request: Request, authorization: str = Header(None)):
     # - Everything else defaults to Anthropic format to ensure 'content' field is present
     
     request_path = request.url.path
-    # Check if path contains /models/gemini (works for both /v1/projects/.../models/gemini-... and /v1beta/models/gemini-...)
-    is_gemini_path = "/models/gemini" in request_path.lower()
-    
-    # Simple paths (/:generateContent, /generateContent) or paths without explicit Gemini model → Anthropic format
-    # This ensures all responses have 'content' field which is required
-    use_anthropic_format = not is_gemini_path
     
     # Extract model name from path for response
     model = None
@@ -777,7 +771,12 @@ async def generate_content(request: Request, authorization: str = Header(None)):
         except:
             pass
     
-    if use_anthropic_format:
+    # Check if this is a Gemini model: path contains /models/gemini OR extracted model name contains "gemini"
+    is_gemini_path = "/models/gemini" in request_path.lower() or (model and "gemini" in model.lower())
+    
+    # Return Gemini format for Gemini models, Anthropic format for all others
+    # This ensures Anthropic format always has 'content' field, Gemini format has 'usageMetadata'
+    if not is_gemini_path:
         # Return Anthropic Messages API format - MUST include 'content' array field
         response = {
             "id": f"msg_{uuid.uuid4().hex}",
@@ -814,7 +813,8 @@ async def generate_content(request: Request, authorization: str = Header(None)):
         print(f"[DEBUG] Returning Anthropic format response: {json.dumps(response_debug)}")
         return response
     
-    # Otherwise return Vertex AI Gemini format
+    # Return Vertex AI Gemini format (only reached if is_gemini_path is True)
+    # IMPORTANT: Gemini format requires "usageMetadata" (not "usage")
     response = {
         "candidates": [
             {
@@ -822,7 +822,7 @@ async def generate_content(request: Request, authorization: str = Header(None)):
                     "role": "model",
                     "parts": [
                         {
-                            "text": "Good morning to you too! I am not Claude, however. Claude is a large language model trained by Google, while I am Gemini, a multi-modal AI model, developed by Google as well. Is there anything I can help you with today?"
+                            "text": f"Hello! This is a mock response from Vertex AI Gemini endpoint. Model: {model or 'gemini'}"
                         }
                     ]
                 },
@@ -860,7 +860,7 @@ async def generate_content(request: Request, authorization: str = Header(None)):
                 "avgLogprobs": -0.30250951355578853
             }
         ],
-        "usageMetadata": {
+        "usageMetadata": {  # REQUIRED: Gemini format uses "usageMetadata" (not "usage")
             "promptTokenCount": 5,
             "candidatesTokenCount": 51,
             "totalTokenCount": 56
