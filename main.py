@@ -753,8 +753,10 @@ async def generate_content(request: Request, authorization: str = Header(None)):
 
     data = await request.json()
     
-    # Detect model name from URL path
-    # Extract model from URL path if it's in the path (e.g., from catch-all route parameter)
+    # Detect model name from multiple sources:
+    # 1. URL path (e.g., /v1/projects/.../models/claude-4.5-haiku:generateContent)
+    # 2. Request body (model field)
+    # 3. Headers (x-model or similar)
     model = None
     path_parts = request.url.path.split("/")
     for i, part in enumerate(path_parts):
@@ -762,8 +764,36 @@ async def generate_content(request: Request, authorization: str = Header(None)):
             model = path_parts[i + 1].split(":")[0]  # Remove :generateContent suffix
             break
     
+    # If not in path, try request body
+    if not model and isinstance(data, dict):
+        model = data.get("model") or data.get("model_name")
+    
+    # Check headers as fallback
+    if not model:
+        model = request.headers.get("x-model") or request.headers.get("model")
+    
+    # Log for debugging
+    print(f"[DEBUG] generate_content - Path: {request.url.path}, Model: {model}, Data keys: {list(data.keys()) if isinstance(data, dict) else 'N/A'}")
+    
     # Check if this is an Anthropic model (contains "claude")
-    is_anthropic = model and "claude" in model.lower()
+    # Check model name, or check if request body contains Anthropic indicators
+    is_anthropic = False
+    if model and "claude" in model.lower():
+        is_anthropic = True
+    elif isinstance(data, dict):
+        # Check request body for Anthropic indicators
+        # Look for model name in various possible fields
+        body_model = data.get("model") or data.get("model_name") or data.get("modelId")
+        if body_model and "claude" in str(body_model).lower():
+            is_anthropic = True
+            model = body_model
+        # Also check if path is simple (/:generateContent) - LiteLLM uses this for Vertex AI Anthropic
+        elif request.url.path in ["/:generateContent", "/generateContent"] or (
+            request.url.path.endswith(":generateContent") and "/models/" not in request.url.path
+        ):
+            # Default to Anthropic format for simple paths (LiteLLM pattern for Vertex AI Anthropic)
+            is_anthropic = True
+            print(f"[DEBUG] Defaulting to Anthropic format for simple path: {request.url.path}")
     
     # Return Anthropic Messages API format for Anthropic models
     if is_anthropic:
