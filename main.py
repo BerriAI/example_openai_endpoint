@@ -773,13 +773,38 @@ async def generate_content(request: Request, authorization: str = Header(None)):
         model = request.headers.get("x-model") or request.headers.get("model")
     
     # Log for debugging - include full request info for troubleshooting
+    # Also check request body more thoroughly for model information
+    if isinstance(data, dict):
+        # Check all possible model-related fields in request body
+        all_model_fields = {
+            'model': data.get('model'),
+            'model_name': data.get('model_name'),
+            'modelId': data.get('modelId'),
+            'contents': data.get('contents'),  # Vertex AI format
+            'contents_model': None
+        }
+        # Check if contents array has model info
+        if isinstance(data.get('contents'), list) and len(data.get('contents', [])) > 0:
+            first_content = data.get('contents', [{}])[0]
+            if isinstance(first_content, dict):
+                all_model_fields['contents_model'] = first_content.get('model')
+        
+        # Use first found model field
+        if not model:
+            for field_name, field_value in all_model_fields.items():
+                if field_value:
+                    model = field_value
+                    print(f"[DEBUG] Found model in request body field '{field_name}': {model}")
+                    break
+    
     request_info = {
         "path": request.url.path,
-        "model": model,
+        "detected_model": model,
         "data_keys": list(data.keys()) if isinstance(data, dict) else 'N/A',
+        "data_sample": {k: str(v)[:100] if v else None for k, v in list(data.items())[:3]} if isinstance(data, dict) else None,
         "headers": {k: v for k, v in request.headers.items() if k.lower() in ['user-agent', 'anthropic-version', 'content-type']}
     }
-    print(f"[DEBUG] generate_content - {json.dumps(request_info)}")
+    print(f"[DEBUG] generate_content - {json.dumps(request_info, default=str)}")
     
     # Detect model type: Anthropic (claude) vs Gemini vs Unknown
     is_gemini = False
@@ -846,7 +871,21 @@ async def generate_content(request: Request, authorization: str = Header(None)):
                 "output_tokens": 20
             }
         }
-        print(f"[DEBUG] Returning Anthropic format response with content field: {json.dumps({'id': response['id'], 'has_content': 'content' in response, 'content_type': type(response.get('content')).__name__})}")
+        # Verify content field exists before returning
+        if 'content' not in response:
+            error_msg = f"CRITICAL: Anthropic response missing 'content' field! Response keys: {list(response.keys())}"
+            print(f"[ERROR] {error_msg}")
+            # Add content field if missing (safety check)
+            response['content'] = [{"type": "text", "text": "Error: content field was missing, but now added"}]
+        
+        response_debug = {
+            'id': response['id'],
+            'has_content': 'content' in response,
+            'content_type': type(response.get('content')).__name__,
+            'content_length': len(response.get('content', [])) if isinstance(response.get('content'), list) else 0,
+            'all_keys': list(response.keys())
+        }
+        print(f"[DEBUG] Returning Anthropic format response: {json.dumps(response_debug)}")
         return response
     
     # Otherwise return Vertex AI Gemini format
