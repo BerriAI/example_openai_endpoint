@@ -385,7 +385,11 @@ def data_generator():
 @app.post("/chat/completions")
 @app.post("/v1/chat/completions")
 @app.post("/openai/deployments/{model:path}/chat/completions")  # azure compatible endpoint
-async def completion(request: Request):
+async def completion(request: Request, authorization: str = Header(None)):
+    # Accept both Authorization: Bearer and x-goog-api-key (optional for OpenAI-compatible endpoints)
+    # This allows Gemini models routed through /chat/completions to work
+    has_valid_auth(request, authorization)
+    
     _time_to_sleep = os.getenv("TIME_TO_SLEEP", None)
     if _time_to_sleep is not None:
         print("sleeping for " + _time_to_sleep)
@@ -578,7 +582,11 @@ async def invocation(request: Request):
 @app.post("/embeddings")
 @app.post("/v1/embeddings")
 @app.post("/openai/deployments/{model:path}/embeddings")  # azure compatible endpoint
-async def embeddings(request: Request):
+async def embeddings(request: Request, authorization: str = Header(None)):
+    # Accept both Authorization: Bearer and x-goog-api-key (optional for OpenAI-compatible endpoints)
+    # This allows Gemini models routed through /embeddings to work
+    has_valid_auth(request, authorization)
+    
     _small_embedding = [
         -0.006929283495992422,
         -0.005336422007530928,
@@ -900,16 +908,72 @@ async def openai_files(request: Request):
 async def fake_bedrock_endpoint(request: Request):
     return {"metrics":{"latencyMs":393},"output":{"message":{"content":[{"text":"Good morning to you too! I am not Claude, however. Claude is a large language model trained by Google, while I am Gemini, a multi-modal AI model, developed by Google as well. Is there anything I can help you with today?"}],"role":"assistant"}},"stopReason":"end_turn","usage":{"inputTokens":37,"outputTokens":8,"totalTokens":45}}
 
+@app.post("/model/{modelId}/invoke")
+async def fake_bedrock_invoke(request: Request, modelId: str):
+    """Bedrock invoke endpoint for text generation and embeddings"""
+    data = await request.json()
+    
+    # Check if this is an embedding model
+    if "embed" in modelId.lower() or "titan-embed" in modelId.lower() or "cohere.embed" in modelId.lower():
+        # Return embedding format
+        input_text = data.get("inputText", data.get("text", ""))
+        if isinstance(input_text, list):
+            input_text = " ".join(str(t) for t in input_text)
+        
+        # Generate fake embedding (768 dimensions for most models)
+        embedding = [random.uniform(-0.15, 0.15) for _ in range(768)]
+        
+        return {
+            "embedding": embedding,
+            "inputTextTokenCount": len(input_text.split()) if input_text else 0
+        }
+    else:
+        # Return text generation format
+        return {
+            "results": [
+                {
+                    "outputText": "This is a mock response from Bedrock.",
+                    "completionReason": "FINISH",
+                    "tokenCount": {
+                        "inputTokens": 10,
+                        "outputTokens": 8,
+                        "totalTokens": 18
+                    }
+                }
+            ]
+        }
+
 ### FAKE VERTEX ENDPOINT ### 
 
+def validate_google_auth(request: Request, authorization: str = None, required: bool = True):
+    """Validate authentication for Google endpoints - accepts both Bearer token and x-goog-api-key"""
+    # Check Authorization header (Vertex AI format)
+    if authorization and authorization.startswith("Bearer "):
+        return True
+    
+    # Check x-goog-api-key header (Gemini API format)
+    api_key = request.headers.get("x-goog-api-key") or request.headers.get("X-Goog-Api-Key")
+    if api_key:
+        return True
+    
+    # No valid auth found
+    if required:
+        raise HTTPException(status_code=401, detail="Invalid or missing Authorization header. Use 'Authorization: Bearer <token>' or 'x-goog-api-key: <key>'")
+    return False
+
+def has_valid_auth(request: Request, authorization: str = None) -> bool:
+    """Check if request has valid authentication (either format) - returns True/False without raising"""
+    try:
+        return validate_google_auth(request, authorization, required=False)
+    except HTTPException:
+        return False
 
 @app.post("/generateContent")
 @app.post("/v1/projects/adroit-crow-413218/locations/us-central1/publishers/google/models/gemini-1.0-pro-vision-001:generateContent")
 @app.post("/v1/projects/pathrise-convert-1606954137718/locations/us-central1/publishers/google/models/gemini-1.0-pro-vision-001:generateContent")
 @app.post("/v1beta/models/gemini-1.5-flash:generateContent")
 async def generate_content(request: Request, authorization: str = Header(None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Invalid or missing Authorization header")
+    validate_google_auth(request, authorization)
 
     data = await request.json()
     
@@ -1056,8 +1120,7 @@ async def generate_content_bad(request: Request, authorization: str = Header(Non
     global request_counter
     request_counter += 1
 
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Invalid or missing Authorization header")
+    validate_google_auth(request, authorization)
 
     # Raise an error for every 200th request
     if request_counter % 200 == 0:
@@ -1127,14 +1190,51 @@ async def generate_content_bad(request: Request, authorization: str = Header(Non
     return response
 
 
+@app.post("/models/{model}:batchEmbedContents")
+async def gemini_batch_embed_contents(request: Request, model: str, authorization: str = Header(None)):
+    """Gemini batch embedding endpoint"""
+    validate_google_auth(request, authorization)
+    
+    data = await request.json()
+    
+    # Extract requests from the body
+    requests_list = data.get("requests", [])
+    if not requests_list:
+        raise HTTPException(status_code=400, detail="Missing 'requests' field in body")
+    
+    # Generate embeddings for each request
+    embeddings = []
+    for req in requests_list:
+        # Extract text from the request
+        text = ""
+        if "text" in req:
+            text = req["text"]
+        elif "content" in req:
+            content = req["content"]
+            if isinstance(content, list) and len(content) > 0:
+                if "parts" in content[0]:
+                    parts = content[0]["parts"]
+                    if isinstance(parts, list) and len(parts) > 0:
+                        text = parts[0].get("text", "")
+        
+        # Generate fake embedding (768 dimensions)
+        embedding = [random.uniform(-0.15, 0.15) for _ in range(768)]
+        
+        embeddings.append({
+            "values": embedding
+        })
+    
+    return {
+        "embeddings": embeddings
+    }
+
 
 @app.post("/predict")
 @app.post("/rawPredict")
 @app.post("/v1/projects/adroit-crow-413218/locations/us-central1/publishers/google/models/textembedding-gecko@001:predict")
 @app.post("/v1/projects/pathrise-convert-1606954137718/locations/us-central1/publishers/google/models/textembedding-gecko@001:predict")
 async def predict(request: Request, authorization: str = Header(None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Invalid or missing Authorization header")
+    validate_google_auth(request, authorization)
 
     data = await request.json()
     
@@ -1260,8 +1360,7 @@ async def predict(request: Request, authorization: str = Header(None)):
 @app.post("/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:generateContent")
 async def vertex_generate_content_catchall(request: Request, project: str, location: str, model: str, authorization: str = Header(None)):
     """Catch-all endpoint for Vertex AI generateContent - accepts any project/location/model"""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Invalid or missing Authorization header")
+    validate_google_auth(request, authorization)
 
     data = await request.json()
     
@@ -1385,8 +1484,7 @@ async def vertex_generate_content_catchall(request: Request, project: str, locat
 @app.post("/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:predict")
 async def vertex_predict_catchall(request: Request, project: str, location: str, model: str, authorization: str = Header(None)):
     """Catch-all endpoint for Vertex AI predict (embeddings) - accepts any project/location/model"""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Invalid or missing Authorization header")
+    validate_google_auth(request, authorization)
 
     data = await request.json()
     
@@ -1491,6 +1589,7 @@ async def vertex_predict_catchall(request: Request, project: str, location: str,
 @app.post("/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:rawPredict")
 async def vertex_raw_predict_catchall(request: Request, project: str, location: str, model: str, authorization: str = Header(None)):
     """Catch-all endpoint for Vertex AI rawPredict - accepts any project/location/model"""
+    validate_google_auth(request, authorization)
     # rawPredict is similar to predict, so delegate to the same handler
     return await vertex_predict_catchall(request, project, location, model, authorization)
 
