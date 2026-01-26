@@ -914,30 +914,14 @@ async def fake_bedrock_invoke(request: Request, modelId: str):
     data = await request.json()
     modelId_lower = modelId.lower()
     
-    # Check if this is an embedding model
-    if "embed" in modelId_lower or "titan-embed" in modelId_lower or "cohere.embed" in modelId_lower:
-        # Return embedding format
-        input_text = data.get("inputText", data.get("text", ""))
-        if isinstance(input_text, list):
-            input_text = " ".join(str(t) for t in input_text)
-        
-        # Generate fake embedding (768 dimensions for most models)
-        embedding = [random.uniform(-0.15, 0.15) for _ in range(768)]
-        
-        # Cohere models expect "embeddings" (plural) in an array
-        if "cohere.embed" in modelId_lower:
-            return {
-                "embeddings": [embedding],
-                "id": f"embed_{uuid.uuid4().hex}"
-            }
-        else:
-            # Titan and other embedding models
-            return {
-                "embedding": embedding,
-                "inputTextTokenCount": len(input_text.split()) if input_text else 0
-            }
-    elif "mistral" in modelId_lower:
-        # Mistral models expect a different format with "outputs" array
+    print(f"[bedrock_invoke] modelId={modelId}, modelId_lower={modelId_lower}")
+    
+    # Check for Mistral models FIRST (before embedding check)
+    # Mistral model IDs: mistral.mistral-7b-instruct-v0:2, mistral.mixtral-8x7b-instruct-v0:1
+    if "mistral" in modelId_lower:
+        print(f"[bedrock_invoke] Detected Mistral model, returning outputs format")
+        # Mistral models expect "outputs" array with "text" and "stop_reason"
+        # Reference: litellm/llms/bedrock/chat/invoke_handler.py line 657-661
         return {
             "outputs": [
                 {
@@ -946,8 +930,37 @@ async def fake_bedrock_invoke(request: Request, modelId: str):
                 }
             ]
         }
+    # Check if this is an embedding model
+    elif "embed" in modelId_lower or "titan-embed" in modelId_lower:
+        print(f"[bedrock_invoke] Detected embedding model")
+        # Return embedding format
+        input_text = data.get("inputText", data.get("text", ""))
+        if isinstance(input_text, list):
+            input_text = " ".join(str(t) for t in input_text)
+        
+        # Generate fake embedding (768 dimensions for most models, 1024 for Cohere v3)
+        embedding_dim = 1024 if "cohere.embed" in modelId_lower else 768
+        embedding = [random.uniform(-0.15, 0.15) for _ in range(embedding_dim)]
+        
+        # Cohere models expect "embeddings" (plural) in an array
+        # Model IDs: cohere.embed-english-v3, cohere.embed-multilingual-v3
+        if "cohere.embed" in modelId_lower:
+            print(f"[bedrock_invoke] Detected Cohere embedding model, returning embeddings array")
+            return {
+                "embeddings": [embedding],
+                "id": f"embed_{uuid.uuid4().hex}",
+                "response_type": "embeddings_floats"
+            }
+        else:
+            # Titan and other embedding models expect "embedding" (singular)
+            print(f"[bedrock_invoke] Detected Titan/other embedding model, returning embedding format")
+            return {
+                "embedding": embedding,
+                "inputTextTokenCount": len(input_text.split()) if input_text else 0
+            }
     else:
-        # Return text generation format for other models (Titan, etc.)
+        # Return text generation format for other models (Amazon Titan text, etc.)
+        print(f"[bedrock_invoke] Default to Amazon Titan text format with results")
         return {
             "results": [
                 {
