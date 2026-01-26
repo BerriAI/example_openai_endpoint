@@ -912,9 +912,10 @@ async def fake_bedrock_endpoint(request: Request):
 async def fake_bedrock_invoke(request: Request, modelId: str):
     """Bedrock invoke endpoint for text generation and embeddings"""
     data = await request.json()
+    modelId_lower = modelId.lower()
     
     # Check if this is an embedding model
-    if "embed" in modelId.lower() or "titan-embed" in modelId.lower() or "cohere.embed" in modelId.lower():
+    if "embed" in modelId_lower or "titan-embed" in modelId_lower or "cohere.embed" in modelId_lower:
         # Return embedding format
         input_text = data.get("inputText", data.get("text", ""))
         if isinstance(input_text, list):
@@ -923,12 +924,30 @@ async def fake_bedrock_invoke(request: Request, modelId: str):
         # Generate fake embedding (768 dimensions for most models)
         embedding = [random.uniform(-0.15, 0.15) for _ in range(768)]
         
+        # Cohere models expect "embeddings" (plural) in an array
+        if "cohere.embed" in modelId_lower:
+            return {
+                "embeddings": [embedding],
+                "id": f"embed_{uuid.uuid4().hex}"
+            }
+        else:
+            # Titan and other embedding models
+            return {
+                "embedding": embedding,
+                "inputTextTokenCount": len(input_text.split()) if input_text else 0
+            }
+    elif "mistral" in modelId_lower:
+        # Mistral models expect a different format with "outputs" array
         return {
-            "embedding": embedding,
-            "inputTextTokenCount": len(input_text.split()) if input_text else 0
+            "outputs": [
+                {
+                    "text": "This is a mock response from Bedrock Mistral model.",
+                    "stop_reason": "stop"
+                }
+            ]
         }
     else:
-        # Return text generation format
+        # Return text generation format for other models (Titan, etc.)
         return {
             "results": [
                 {
