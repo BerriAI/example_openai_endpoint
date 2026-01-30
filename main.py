@@ -362,17 +362,18 @@ app.add_middleware(
 app.include_router(batch_files_router, prefix="/v1")
 
 
-def data_generator():
+def data_generator(model=None):
     response_id = uuid.uuid4().hex
     sentence = "Hello this is a test response from a fixed OpenAI endpoint."
     words = sentence.split(" ")
+    _model = model if isinstance(model, str) else "gpt-3.5-turbo-0125"
     for word in words:
         word = word + " "
         chunk = {
                     "id": f"chatcmpl-{response_id}",
                     "object": "chat.completion.chunk",
                     "created": 1677652288,
-                    "model": "gpt-3.5-turbo-0125",
+                    "model": _model,
                     "choices": [{"index": 0, "delta": {"content": word}}],
                 }
         try:
@@ -420,8 +421,14 @@ async def completion(request: Request, authorization: str = Header(None)):
     # So when path is /v1/chat/completions, do NOT stream—fall through to return Anthropic JSON.
     _path_for_claude = request.url.path
     if data.get("stream") == True and "/v1/chat/completions" not in _path_for_claude:
+        _stream_model = (
+            data.get("model") or data.get("model_name") or data.get("modelId") or data.get("model_id")
+            or (getattr(request, "path_params", None) or {}).get("model")
+            or "gpt-3.5-turbo-0125"
+        )
+        _stream_model = _stream_model if isinstance(_stream_model, str) else "gpt-3.5-turbo-0125"
         return StreamingResponse(
-            content=data_generator(),
+            content=data_generator(model=_stream_model),
             media_type="text/event-stream",
         )
     # Model: body (model, model_name, modelId, model_id, litellm_model_id), path (Azure), query,
@@ -484,8 +491,9 @@ async def completion(request: Request, authorization: str = Header(None)):
 
     if _model == "gpt-5":
         _model = "gpt-12"
-    else:
-        _model = "gpt-3.5-turbo-0301"
+    elif not _model:
+        _model = "gpt-3.5-turbo-0301"  # fallback when no model in request
+    # else: echo the requested model (e.g. gpt-4o-mini) to avoid LiteLLM mismatch warning
     response_id = uuid.uuid4().hex
     response = {
         "id": f"chatcmpl-{response_id}",
@@ -515,10 +523,12 @@ async def completion(request: Request, authorization: str = Header(None)):
 @app.post("/v1/completions")
 async def text_completion(request: Request):
     data = await request.json()
+    _model = data.get("model") or data.get("model_name") or data.get("modelId") or data.get("model_id") or "unknown"
+    _model = _model if isinstance(_model, str) else "unknown"
 
     if data.get("stream") == True:
         return StreamingResponse(
-            content=data_generator(),
+            content=data_generator(model=_model),
             media_type="text/event-stream",
         )
     else:
@@ -534,7 +544,7 @@ async def text_completion(request: Request):
                 }
             ],
             "created": 1712420078,
-            "model": "unknown",
+            "model": _model,
             "object": "text_completion",
             "system_fingerprint": None,
             "usage": {
@@ -1781,17 +1791,18 @@ async def get_slack_history():
 
 
 
-def data_generator_anthropic():
+def data_generator_anthropic(model=None):
     response_id = uuid.uuid4().hex
     sentence = "Hello this is a test response from a fixed OpenAI endpoint."
     words = sentence.split(" ")
+    _model = model if isinstance(model, str) else "claude-3-opus-20240229"
     for word in words:
         word = word + " "
         chunk = {
                     "id": f"chatcmpl-{response_id}",
                     "object": "chat.completion.chunk",
                     "created": 1677652288,
-                    "model": "gpt-3.5-turbo-0125",
+                    "model": _model,
                     "choices": [{"index": 0, "delta": {"content": word}}],
                 }
         try:
@@ -1805,10 +1816,15 @@ def data_generator_anthropic():
 @app.post("/v1/messages")
 async def completion_anthropic(request: Request):
     data = await request.json()
+    _model = (
+        data.get("model") or data.get("model_name") or data.get("modelId") or data.get("model_id")
+        or "claude-3-opus-20240229"
+    )
+    _model = _model if isinstance(_model, str) else "claude-3-opus-20240229"
 
     if data.get("stream") == True:
         return StreamingResponse(
-            content=data_generator_anthropic(),
+            content=data_generator_anthropic(model=_model),
             media_type="text/event-stream",
         )
     else:
@@ -1822,7 +1838,7 @@ async def completion_anthropic(request: Request):
                 "text": "I'm sorry, but the string of characters \"123450000s0 p kk\" doesn't appear to have any clear meaning or context. It seems to be a random combination of numbers and letters. If you could provide more information or clarify what you're trying to communicate, I'll do my best to assist you."
                 }
             ],
-            "model": "claude-3-opus-20240229",
+            "model": _model,
             "stop_reason": "end_turn",
             "stop_sequence": None,
             "usage": {
