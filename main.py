@@ -477,7 +477,7 @@ async def completion(request: Request, authorization: str = Header(None)):
             "model": _disp,
             "stop_reason": "end_turn",
             "stop_sequence": None,
-            "usage": {"input_tokens": 10, "output_tokens": 20},
+            "usage": {"input_tokens": 10, "output_tokens": 20, "total_tokens": 30},
         }
         print(f"[fmt] completion path={request.url.path} body_keys={list(data.keys())} model={_disp} branch=claude_anthropic response_keys={list(resp.keys())}")
         return resp
@@ -1067,7 +1067,8 @@ async def generate_content(request: Request, authorization: str = Header(None)):
             "stop_sequence": None,
             "usage": {
                 "input_tokens": 10,
-                "output_tokens": 20
+                "output_tokens": 20,
+                "total_tokens": 30
             }
         }
         # Ensure content field exists
@@ -1341,7 +1342,8 @@ async def predict(request: Request, authorization: str = Header(None)):
             "stop_sequence": None,
             "usage": {
                 "input_tokens": 10,
-                "output_tokens": 20
+                "output_tokens": 20,
+                "total_tokens": 30
             }
         }
         # Ensure content field exists
@@ -1441,7 +1443,8 @@ async def vertex_generate_content_catchall(request: Request, project: str, locat
             "stop_sequence": None,
             "usage": {
                 "input_tokens": 10,
-                "output_tokens": 20
+                "output_tokens": 20,
+                "total_tokens": 30
             }
         }
         # Safety check: Ensure content field exists and is a list
@@ -1578,7 +1581,8 @@ async def vertex_predict_catchall(request: Request, project: str, location: str,
             "stop_sequence": None,
             "usage": {
                 "input_tokens": 10,
-                "output_tokens": 20
+                "output_tokens": 20,
+                "total_tokens": 30
             }
         }
         # Ensure content field exists
@@ -1823,7 +1827,8 @@ async def completion_anthropic(request: Request):
             "stop_sequence": None,
             "usage": {
                 "input_tokens": 17,
-                "output_tokens": 71
+                "output_tokens": 71,
+                "total_tokens": 88
             }
         }
 
