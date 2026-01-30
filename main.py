@@ -21,6 +21,18 @@ from pydantic import BaseModel
 from batch_and_files_api import router as batch_files_router
 
 from slowapi import Limiter, _rate_limit_exceeded_handler
+
+
+def _normalize_model_for_response(model: str) -> str:
+    """Normalize deployment model IDs (e.g. gpt-4o-mini-data-zone) to client-facing names (gpt-4o-mini)
+    so LiteLLM does not log 'response model mismatch' when backend returns a deployment variant."""
+    if not model or not isinstance(model, str):
+        return model or ""
+    # Strip known deployment suffixes so response matches what the client requested
+    for suffix in ("-data-zone", "-eu", "-us", "-preview"):
+        if model.endswith(suffix):
+            return model[: -len(suffix)]
+    return model
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
@@ -422,11 +434,14 @@ async def completion(request: Request, authorization: str = Header(None)):
     _path_for_claude = request.url.path
     if data.get("stream") == True and "/v1/chat/completions" not in _path_for_claude:
         _stream_model = (
-            data.get("model") or data.get("model_name") or data.get("modelId") or data.get("model_id")
+            data.get("litellm_model_id") or data.get("model") or data.get("model_name")
+            or data.get("modelId") or data.get("model_id")
             or (getattr(request, "path_params", None) or {}).get("model")
             or "gpt-3.5-turbo-0125"
         )
-        _stream_model = _stream_model if isinstance(_stream_model, str) else "gpt-3.5-turbo-0125"
+        _stream_model = _normalize_model_for_response(
+            _stream_model if isinstance(_stream_model, str) else "gpt-3.5-turbo-0125"
+        )
         return StreamingResponse(
             content=data_generator(model=_stream_model),
             media_type="text/event-stream",
@@ -473,7 +488,7 @@ async def completion(request: Request, authorization: str = Header(None)):
     # model in the body may be omitted or not contain "claude", so treat that path as Claude.
     is_claude = (_model and "claude" in _model_lower) or "/v1/chat/completions" in _path_for_claude
     if is_claude:
-        _disp = _model or "claude"
+        _disp = _normalize_model_for_response(_model or "claude")
         resp = {
             "id": f"msg_{uuid.uuid4().hex}",
             "type": "message",
@@ -493,7 +508,8 @@ async def completion(request: Request, authorization: str = Header(None)):
         _model = "gpt-12"
     elif not _model:
         _model = "gpt-3.5-turbo-0301"  # fallback when no model in request
-    # else: echo the requested model (e.g. gpt-4o-mini) to avoid LiteLLM mismatch warning
+    else:
+        _model = _normalize_model_for_response(_model)  # e.g. gpt-4o-mini-data-zone -> gpt-4o-mini
     response_id = uuid.uuid4().hex
     response = {
         "id": f"chatcmpl-{response_id}",
@@ -523,8 +539,11 @@ async def completion(request: Request, authorization: str = Header(None)):
 @app.post("/v1/completions")
 async def text_completion(request: Request):
     data = await request.json()
-    _model = data.get("model") or data.get("model_name") or data.get("modelId") or data.get("model_id") or "unknown"
-    _model = _model if isinstance(_model, str) else "unknown"
+    _model = (
+        data.get("litellm_model_id") or data.get("model") or data.get("model_name")
+        or data.get("modelId") or data.get("model_id") or "unknown"
+    )
+    _model = _normalize_model_for_response(_model if isinstance(_model, str) else "unknown")
 
     if data.get("stream") == True:
         return StreamingResponse(
@@ -1031,9 +1050,12 @@ async def generate_content(request: Request, authorization: str = Header(None)):
         except:
             pass
     
-    # Also check request body for model information (fallback)
-    if not model and isinstance(data, dict):
-        model = data.get("model") or data.get("model_name") or data.get("modelId") or data.get("model_id")
+    # Also check request body for model information (fallback). Prefer litellm_model_id (client-facing).
+    if isinstance(data, dict):
+        model = (
+            data.get("litellm_model_id") or model
+            or data.get("model") or data.get("model_name") or data.get("modelId") or data.get("model_id")
+        )
     
     # Determine if this is a Gemini model: check path OR model name
     # Claude models MUST get Anthropic format (with 'content'). Gemini gets Gemini format (with 'candidates', 'usageMetadata').
@@ -1072,7 +1094,7 @@ async def generate_content(request: Request, authorization: str = Header(None)):
                     "text": "Hello! This is a mock response from the Vertex AI Anthropic endpoint. I'm processing your request."
                 }
             ],
-            "model": model or "unknown",
+            "model": _normalize_model_for_response(model or "unknown"),
             "stop_reason": "end_turn",
             "stop_sequence": None,
             "usage": {
@@ -1292,10 +1314,13 @@ async def predict(request: Request, authorization: str = Header(None)):
         except:
             pass
     
-    # Also check request body for model information
+    # Also check request body for model information (prefer litellm_model_id = client-facing name)
     model_from_body = None
     if isinstance(data, dict):
-        model_from_body = data.get("model") or data.get("model_name") or data.get("modelId") or data.get("model_id")
+        model_from_body = (
+            data.get("litellm_model_id") or data.get("model") or data.get("model_name")
+            or data.get("modelId") or data.get("model_id")
+        )
     
     # Check headers for model information (LiteLLM may pass model in headers)
     model_from_headers = (
@@ -1305,8 +1330,8 @@ async def predict(request: Request, authorization: str = Header(None)):
         request.headers.get("x-litellm-model")
     )
     
-    # Determine final model
-    final_model = model_from_path or model_from_body or model_from_headers or ""
+    # Determine final model (prefer body = client-facing name over path = deployment ID)
+    final_model = model_from_body or model_from_path or model_from_headers or ""
     model_lower = (final_model or "").lower()
     
     # Check request body structure: Claude requests use "contents" (Anthropic format) or "messages" (chat format),
@@ -1347,7 +1372,7 @@ async def predict(request: Request, authorization: str = Header(None)):
                     "text": f"Hello! This is a mock response from Vertex AI Anthropic endpoint via predict/rawPredict. Model: {final_model or 'claude'}"
                 }
             ],
-            "model": final_model or "claude",
+            "model": _normalize_model_for_response(final_model or "claude"),
             "stop_reason": "end_turn",
             "stop_sequence": None,
             "usage": {
@@ -1408,13 +1433,16 @@ async def vertex_generate_content_catchall(request: Request, project: str, locat
 
     data = await request.json()
     
-    # Also check request body for model information as fallback
+    # Also check request body for model information (prefer litellm_model_id = client-facing name)
     model_from_body = None
     if isinstance(data, dict):
-        model_from_body = data.get("model") or data.get("model_name") or data.get("modelId") or data.get("model_id")
+        model_from_body = (
+            data.get("litellm_model_id") or data.get("model") or data.get("model_name")
+            or data.get("modelId") or data.get("model_id")
+        )
     
-    # Use model from path or body, prioritizing path
-    final_model = model or model_from_body or ""
+    # Use model from body (client-facing) or path
+    final_model = model_from_body or model or ""
     
     # Model detection: only /models/gemini or /models/claude in path to avoid false positives (e.g. "gemini" in project ID)
     request_path_lower = request.url.path.lower()
@@ -1448,7 +1476,7 @@ async def vertex_generate_content_catchall(request: Request, project: str, locat
                     "text": f"Hello! This is a mock response from Vertex AI Anthropic endpoint. Model: {final_model or model}"
                 }
             ],
-            "model": final_model or model or "unknown",
+            "model": _normalize_model_for_response(final_model or model or "unknown"),
             "stop_reason": "end_turn",
             "stop_sequence": None,
             "usage": {
@@ -1541,12 +1569,14 @@ async def vertex_predict_catchall(request: Request, project: str, location: str,
         request.headers.get("x-litellm-model")
     )
     
-    # Use model from path, body, or headers
-    final_model = model or model_from_headers or ""
+    # Use model from body (prefer litellm_model_id), headers, or path
+    model_from_body = None
     if isinstance(data, dict):
-        model_from_body = data.get("model") or data.get("model_name") or data.get("modelId") or data.get("model_id")
-        if model_from_body:
-            final_model = model_from_body
+        model_from_body = (
+            data.get("litellm_model_id") or data.get("model") or data.get("model_name")
+            or data.get("modelId") or data.get("model_id")
+        )
+    final_model = model_from_body or model or model_from_headers or ""
     
     # Check request body structure: Claude requests use "contents" (Anthropic format) or "messages" (chat format),
     # while embedding requests use "instances" (Vertex AI embedding format)
@@ -1586,7 +1616,7 @@ async def vertex_predict_catchall(request: Request, project: str, location: str,
                     "text": f"Hello! This is a mock response from Vertex AI Anthropic endpoint via predict. Model: {final_model or model}"
                 }
             ],
-            "model": final_model or model or "claude",
+            "model": _normalize_model_for_response(final_model or model or "claude"),
             "stop_reason": "end_turn",
             "stop_sequence": None,
             "usage": {
@@ -1817,10 +1847,13 @@ def data_generator_anthropic(model=None):
 async def completion_anthropic(request: Request):
     data = await request.json()
     _model = (
-        data.get("model") or data.get("model_name") or data.get("modelId") or data.get("model_id")
+        data.get("litellm_model_id")  # Prefer client-facing model name
+        or data.get("model") or data.get("model_name") or data.get("modelId") or data.get("model_id")
+        or request.headers.get("X-LiteLLM-Model") or request.headers.get("x-litellm-model")
         or "claude-3-opus-20240229"
     )
     _model = _model if isinstance(_model, str) else "claude-3-opus-20240229"
+    _model = _normalize_model_for_response(_model)
 
     if data.get("stream") == True:
         return StreamingResponse(
