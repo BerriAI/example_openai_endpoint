@@ -1923,7 +1923,7 @@ async def has_request_id(request_id: str):
 
 
 # for responses
-def responses_data_generator(input_text=""):
+def responses_data_generator(input_text="", model=None):
     """Generator for streaming Responses API chunks"""
     # Ensure input_text is always a string
     if isinstance(input_text, list):
@@ -1933,6 +1933,7 @@ def responses_data_generator(input_text=""):
     else:
         input_text = str(input_text) if input_text else ""
     
+    _model = _normalize_model_for_response(model) if isinstance(model, str) else "gpt-4.1"
     response_id = uuid.uuid4().hex
     item_id = f"msg_{uuid.uuid4().hex}"
     sentence = f"Hello! I received your input: '{input_text}'. This is a mock response from the Responses API."
@@ -1946,7 +1947,7 @@ def responses_data_generator(input_text=""):
             'id': f'resp_{response_id}',
             'object': 'response',
             'created_at': current_time,
-            'model': 'gpt-4.1',
+            'model': _model,
             'status': 'in_progress',
             'output': []
         }
@@ -1995,7 +1996,7 @@ def responses_data_generator(input_text=""):
             'id': f'resp_{response_id}',
             'object': 'response',
             'created_at': current_time,
-            'model': 'gpt-4.1',
+            'model': _model,
             'status': 'completed',
             'output': [{
                 'type': 'message',
@@ -2202,7 +2203,11 @@ async def create_response(request: Request):
 
     # Non-streaming response setup
     response_id = uuid.uuid4().hex
-    model = data.get("model", "gpt-4.1")
+    model = (
+        data.get("litellm_model_id") or data.get("model") or data.get("model_name")
+        or data.get("modelId") or data.get("model_id") or "gpt-4.1"
+    )
+    model = _normalize_model_for_response(model if isinstance(model, str) else "gpt-4.1")
     input_data = data.get("input", "")
     
     # Handle input: can be string, list, or dict (Azure format)
@@ -2218,7 +2223,7 @@ async def create_response(request: Request):
     
     if data.get("stream") == True:
         return StreamingResponse(
-            content=responses_data_generator(input_text=input_text),
+            content=responses_data_generator(input_text=input_text, model=model),
             media_type="text/event-stream",
         )
     tools = data.get("tools", [])
