@@ -6,3 +6,4 @@ python-multipart>=0.0.20
 pydantic
 python-dotenv>=0.2.0 # for env 
 websockets 
+opentelemetry-proto==1.33.1

@@ -17,6 +17,11 @@ from collections import deque
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Callable, Optional
 from pydantic import BaseModel
+from google.protobuf.message import DecodeError
+from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
+    ExportTraceServiceRequest,
+    ExportTraceServiceResponse,
+)
 
 from batch_and_files_api import router as batch_files_router
 
@@ -1913,6 +1918,33 @@ async def ingestion(request: Request):
     except Exception as e:
         print(f"Error processing ingestion request: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
+
+LANGFUSE_RESPONSE_ID_ATTRIBUTE = "langfuse.observation.metadata.response_id"
+
+
+def otlp_response_ids(body: bytes) -> set:
+    export = ExportTraceServiceRequest()
+    export.ParseFromString(body)
+    return {
+        attribute.value.string_value
+        for resource_spans in export.resource_spans
+        for scope_spans in resource_spans.scope_spans
+        for span in scope_spans.spans
+        for attribute in span.attributes
+        if attribute.key == LANGFUSE_RESPONSE_ID_ATTRIBUTE
+    }
+
+
+@app.post("/api/public/otel/v1/traces")
+async def otel_traces(request: Request):
+    try:
+        response_ids = otlp_response_ids(await request.body())
+    except DecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid OTLP protobuf body: {e}")
+    seen_langfuse_request_ids.update(response_ids)
+    print(f"Stored OTLP response IDs (total: {len(seen_langfuse_request_ids)}): {response_ids}")
+    return Response(content=ExportTraceServiceResponse().SerializeToString(), media_type="application/x-protobuf")
+
 
 @app.get("/langfuse/trace/{request_id}")
 async def has_request_id(request_id: str):
